@@ -44,6 +44,9 @@ More options, all optional:
 | `MATCH_THRESHOLD` | `0.85` | How close a typo may be to match a name. |
 | `POLL_INTERVAL` | `4` | Seconds between checks. |
 | `REPLY_DELAY_MIN` / `REPLY_DELAY_MAX` | `2` / `6` | Random pause before sending. Halved for friend chats. |
+| `QUIET_HOURS` | empty | Window with no replies, such as `23:00-07:00`. Messages that arrive meanwhile get answered once it ends. |
+| `TYPING_CHAR_DELAY_MS` | `70` | Pause per typed character. WhatsApp shows "typing..." while the bot types. `0` pastes instantly. |
+| `MAX_TYPING_SECONDS` | `20` | Upper limit for typing one reply. Long replies type faster to fit. |
 | `SKIP_TRIVIAL` | `true` | Ignore bare "ok", "makasih", "👍". |
 | `DEBOUNCE` | `true` | Wait one poll so a burst of messages gets one reply. |
 | `MAX_REPLIES_PER_HOUR` | `20` | Reply cap per chat. |
@@ -115,15 +118,29 @@ Keep the target chat open in the window. Press Ctrl+C to stop.
 
 ```mermaid
 graph LR
-    A[Read open chat] --> B{In ALLOWED_CHATS?}
-    B -- no --> A
+    Q{Quiet hours?} -- yes --> Q
+    Q -- no --> A[Read open chat]
+    A --> B{In ALLOWED_CHATS?}
+    B -- no --> Q
     B -- yes --> C[Save messages to SQLite]
     C --> D{Last message from them, unanswered?}
-    D -- no --> A
+    D -- no --> Q
     D -- yes --> E[Ask Gemini with last 5 messages]
-    E --> F[Send reply]
-    F --> A
+    E --> F[Type reply key by key, send]
+    F --> Q
 ```
+
+## Lower the ban risk
+
+WhatsApp can ban accounts that automate messages, and no setting removes that risk. These steps help:
+
+- Answer only people who wrote to you first, and keep `ALLOWED_CHATS` short.
+- Set `QUIET_HOURS` so the bot sleeps at night.
+- Keep the typing pause on (`TYPING_CHAR_DELAY_MS`) so replies look typed.
+- Lower `MAX_REPLIES_PER_HOUR` to 6 to 10 and raise `REPLY_DELAY_MAX` to about 40.
+- Use an established number, not a new SIM.
+- Set `BROWSER_CHANNEL=chrome` and run the bot from the same machine each time.
+- Never use it for bulk or marketing messages.
 
 ## Troubleshooting
 
