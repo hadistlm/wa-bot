@@ -80,7 +80,7 @@ More options, all optional:
 - A phone number in any format: `+62 812-3456-7890`, `0812 3456 7890` and `6281234567890` all match the same contact.
 - A pattern: `*Santoso*` matches any name containing "Santoso".
 - A near miss: `Budy` still matches `Budi`.
-- A relationship tag after the entry: `work`, `friend`, `lover` or `family`, for example `Budi:work` or `Sari:lover`. Gemini gets it as context for the tone. Without a tag, the bot infers work or friend from the chat.
+- A relationship tag after the entry: `work`, `friend`, `lover` or `family`, for example `Budi:work` or `Sari:lover`. Without a tag, the bot infers work or friend from the chat. `lover` and `family` also change how the bot writes, see [Lover and family chats](#lover-and-family-chats).
 
 An empty list means the bot answers nobody.
 
@@ -98,6 +98,25 @@ professional English when the sender writes English.
 ```
 
 The bundled `persona.example.md` already does this. Gemini detects the sender's language from the chat, so no extra setting exists.
+
+## Lover and family chats
+
+Chats tagged `lover` or `family` in `ALLOWED_CHATS` get a warmer, longer and more engaged reply. This is fixed in the code and has no setting, on purpose: the rules outrank your persona, so a line in `persona.md` such as "keep replies to one or two lines" cannot shorten these replies.
+
+| | Lover | Family |
+|---|---|---|
+| Tone | warm, affectionate, playful, a follow-up question, a few emoji | warm, respectful, caring, not stiff |
+| Length | 2 to 4 messages, 40 to 90 words in total | 1 to 3 messages, 25 to 60 words in total |
+| Flat "ok" or "iya" | never | never |
+| Answered first | first | after lover, before everyone else |
+
+- **One Gemini call per incoming message.** Gemini writes the whole reply and marks where one chat message ends with a line containing only `---`. The bot splits it, and if Gemini forgets the marker, the bot splits on blank lines and then on sentences. Extra messages past the cap are merged into the last one.
+- **Each message is typed on its own,** with "typing..." before it and a 1.2 to 3.5 s pause between them.
+- **If something fails halfway,** the bot never repeats the reply: the incoming message counts as answered once the first message is sent.
+- **The persona still decides name, language and identity.** Only tone, length and the number of messages change.
+- **To change the wording or the limits,** edit `src/wabot/tone.py`.
+
+Other chats are unchanged: one message, shaped by your persona.
 
 ## How the bot learns each chat
 
