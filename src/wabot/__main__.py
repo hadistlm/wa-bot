@@ -6,10 +6,9 @@ import logging
 import time
 from pathlib import Path
 
-from playwright.sync_api import Error as PlaywrightError
-
 from wabot.bot import Bot
 from wabot.config import Settings
+from wabot.lifecycle import QuietShutdownNoise, browser_gone, short_error, summary_line
 from wabot.llm import FatalReplyError, GeminiReplyGenerator
 from wabot.matching import allow_label
 from wabot.store import Store
@@ -175,22 +174,51 @@ def _run_bot(client: WhatsAppClient, settings: Settings, args: argparse.Namespac
         )
         log.info("running%s. Ctrl+C to stop", " (dry run)" if args.dry_run else "")
         _startup_report(bot, client, settings)
+        started = time.monotonic()
         try:
             while True:
                 try:
                     reply = bot.step()
                 except FatalReplyError as exc:
-                    log.error("fatal: %s", exc)
-                    return 1
-                except PlaywrightError as exc:
-                    log.error("browser problem (was the window closed?): %s", exc)
+                    log.error(
+                        "Gemini rejected the request: %s. Check GEMINI_API_KEY and GEMINI_MODEL "
+                        "in .env.local.",
+                        exc,
+                    )
                     return 1
                 if reply and args.dry_run:
                     print(f"[dry-run] {reply}")
                 time.sleep(settings.poll_interval)
-        except KeyboardInterrupt:
-            log.info("stopped")
-    return 0
+        finally:
+            # Printed on every way out: Ctrl+C, a closed window or an error.
+            log.info(
+                "%s",
+                summary_line(
+                    len(bot.replied_chats),
+                    bot.messages_sent,
+                    time.monotonic() - started,
+                    args.dry_run,
+                ),
+            )
+
+
+def _explain(exc: Exception, args: argparse.Namespace) -> int:
+    """Turn a crash into one friendly line. The traceback only shows with --verbose."""
+    if browser_gone(exc):
+        if args.login:
+            log.error("The browser was closed before login finished. Run: python -m wabot --login")
+            return 1
+        log.warning(
+            "The browser window was closed, so the bot stopped. "
+            "Start it again with: python -m wabot"
+        )
+        return 0
+    log.error(
+        "Something went wrong: %s. Run again with --verbose to see the details.", short_error(exc)
+    )
+    if args.verbose:
+        log.error("Details:", exc_info=exc)
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -199,7 +227,19 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    if not args.verbose:
+        logging.getLogger("asyncio").addFilter(QuietShutdownNoise())
+    try:
+        return _main(args)
+    except KeyboardInterrupt:
+        print()  # ^C leaves the cursor mid-line
+        log.info("Stopped. Bye.")
+        return 0
+    except Exception as exc:
+        return _explain(exc, args)
 
+
+def _main(args: argparse.Namespace) -> int:
     settings = Settings()  # type: ignore[call-arg]
     diagnostic = args.selftest or args.dump_dom or args.list_chats or bool(args.send_test)
     headless = settings.headless and not (args.login or diagnostic)
@@ -222,13 +262,9 @@ def main(argv: list[str] | None = None) -> int:
         except SessionExpiredError as exc:
             log.error("%s", exc)
             return 1
-        try:
-            if diagnostic:
-                return _diagnose(client, args, settings)
-            return _run_bot(client, settings, args)
-        except PlaywrightError as exc:
-            log.error("browser problem: %s", exc)
-            return 1
+        if diagnostic:
+            return _diagnose(client, args, settings)
+        return _run_bot(client, settings, args)
 
 
 if __name__ == "__main__":
