@@ -1,0 +1,147 @@
+# wabot
+
+A bot that answers WhatsApp messages for you. It watches one chat you choose, asks Gemini for a reply in your voice, and sends it.
+
+> **Heads up:** WhatsApp can ban accounts that use automation. Test on a spare number first.
+
+## What you need
+
+- Python 3.11 or newer
+- A [Gemini API key](https://aistudio.google.com/)
+- WhatsApp on your phone
+
+## Install
+
+```bash
+git clone https://github.com/pjha91275/Whatsapp-Reply-Bot.git
+cd Whatsapp-Reply-Bot
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -e .
+playwright install chromium
+cp .env.example .env.local
+cp persona.example.md persona.md
+```
+
+## Configure
+
+Open `.env.local` and set at least these:
+
+| Variable | Example | What it does |
+|---|---|---|
+| `GEMINI_API_KEY` | `AIza...` | Your Gemini key. Required. |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Any Gemini model name. |
+| `PERSONA_NAME` | `Budi` | Your name. Fills `{name}` in the persona. |
+| `ALLOWED_CHATS` | `Budi,+62 812 3456 7890,*Santoso*` | Who the bot answers. See below. |
+| `CONTEXT_MESSAGES` | `5` | How many recent messages Gemini sees. |
+
+More options, all optional:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `PERSONA_FILE` | `persona.md` | Markdown file with your persona. Wins over `PERSONA_PROMPT`. |
+| `PERSONA_PROMPT` | empty | Short persona text, used when the file is missing. |
+| `ALLOW_GROUPS` | `false` | Answer group chats too. |
+| `MATCH_THRESHOLD` | `0.85` | How close a typo may be to match a name. |
+| `POLL_INTERVAL` | `4` | Seconds between checks. |
+| `REPLY_DELAY_MIN` / `REPLY_DELAY_MAX` | `2` / `6` | Random pause before sending. Halved for friend chats. |
+| `SKIP_TRIVIAL` | `true` | Ignore bare "ok", "makasih", "👍". |
+| `DEBOUNCE` | `true` | Wait one poll so a burst of messages gets one reply. |
+| `MAX_REPLIES_PER_HOUR` | `20` | Reply cap per chat. |
+| `GEMINI_TEMPERATURE` | `0.8` | Higher means more varied replies. |
+| `DB_PATH` | `wabot.db` | SQLite file with chat history. |
+| `PROFILE_DIR` | `.wa-profile` | Saved WhatsApp login. |
+| `BROWSER_CHANNEL` | empty | Set to `chrome` to use installed Chrome. |
+
+### Choose who the bot answers
+
+`ALLOWED_CHATS` takes a comma-separated list. Each entry can be:
+
+- A name: `Budi` matches "Budi Santoso". Case and accents do not matter.
+- A phone number in any format: `+62 812-3456-7890`, `0812 3456 7890` and `6281234567890` all match the same contact.
+- A pattern: `*Santoso*` matches any name containing "Santoso".
+- A near miss: `Budy` still matches `Budi`.
+- A relationship tag after the entry: `Budi:work` or `Ani:friend`. Without a tag, the bot infers it from the chat.
+
+An empty list means the bot answers nobody.
+
+### Write your persona
+
+Edit `persona.md`. It is plain Markdown, and `{name}` becomes your `PERSONA_NAME`.
+
+```markdown
+# Persona
+You are {name}, a senior fullstack developer in Yogyakarta, Indonesia.
+
+## Language
+Reply in the language of the latest message: casual Indonesian by default,
+professional English when the sender writes English.
+```
+
+The bundled `persona.example.md` already does this. Gemini detects the sender's language from the chat, so no extra setting exists.
+
+## How the bot learns each chat
+
+The bot stores messages in SQLite and builds a profile for every chat from them, with no extra Gemini calls:
+
+- **Language, formality and message length** of the other person. Gemini receives a short note such as "work contact, mostly English, formal, they write about 12 words".
+- **Your own messages.** The bot tells your hand-typed messages from its own replies, then shows Gemini your last four so it copies your voice. Type a few replies yourself in a new chat to teach it.
+- **Skips** bare acknowledgements, waits for a burst of messages to finish, and stops at the hourly cap.
+
+A new chat has no history, so the bot uses the plain persona until about 5 messages are stored. History only grows while the bot runs.
+
+## Log in once
+
+```bash
+python -m wabot --login
+```
+
+A browser window opens with a QR code. On your phone, go to WhatsApp, then Settings, then Linked Devices, then Link a Device, and scan it. The session stays saved in `.wa-profile/`.
+
+## Try it safely
+
+```bash
+python -m wabot --dry-run
+```
+
+Open the chat you want to test in the browser window. The bot prints replies in the terminal and sends nothing.
+
+## Run it
+
+```bash
+python -m wabot
+```
+
+Keep the target chat open in the window. Press Ctrl+C to stop.
+
+```mermaid
+graph LR
+    A[Read open chat] --> B{In ALLOWED_CHATS?}
+    B -- no --> A
+    B -- yes --> C[Save messages to SQLite]
+    C --> D{Last message from them, unanswered?}
+    D -- no --> A
+    D -- yes --> E[Ask Gemini with last 5 messages]
+    E --> F[Send reply]
+    F --> A
+```
+
+## Troubleshooting
+
+- **"session expired":** run `python -m wabot --login` again.
+- **The bot never replies:** the chat title probably does not match `ALLOWED_CHATS`. Run with `--dry-run` and read the log.
+- **Gemini error "fatal":** check `GEMINI_API_KEY` and `GEMINI_MODEL`.
+- **WhatsApp says the browser is unsupported:** set `BROWSER_CHANNEL=chrome`.
+- **Nothing is read from the chat:** WhatsApp changed its page. Update `src/wabot/whatsapp/selectors.py`.
+
+To read stored history: `sqlite3 wabot.db "select sender, text from messages order by id desc limit 10"`.
+
+## Keep private
+
+Never share `.env.local`, `.wa-profile/`, `wabot.db` or `persona.md`. They hold your key, your login, your chats and a profile of each contact. WhatsApp also logs out linked devices if your phone stays offline for about 14 days.
+
+## Develop
+
+```bash
+pip install -e ".[dev]"
+pytest && ruff check . && mypy src
+```
