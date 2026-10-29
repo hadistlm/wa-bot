@@ -7,12 +7,14 @@ import random
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
 from typing import Protocol
 
 from wabot.llm import FatalReplyError, ReplyError, ReplyGenerator
 from wabot.matching import match_rule
 from wabot.models import Message
 from wabot.profile import build_profile, is_trivial, prompt_block
+from wabot.quiet import QuietHours
 from wabot.store import Store
 
 log = logging.getLogger(__name__)
@@ -26,7 +28,7 @@ class ChatClient(Protocol):
 
     def read_messages(self) -> Sequence[Message]: ...
 
-    def send(self, text: str) -> None: ...
+    def send(self, text: str, char_delay_ms: float = 0.0) -> None: ...
 
 
 class Bot:
@@ -46,6 +48,10 @@ class Bot:
         skip_trivial: bool = False,
         debounce: bool = False,
         max_replies_per_hour: int = 1000,
+        quiet: QuietHours | None = None,
+        char_delay_ms: float = 0.0,
+        max_typing_seconds: float = 20.0,
+        now: Callable[[], datetime] = datetime.now,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -62,6 +68,11 @@ class Bot:
         self._skip_trivial = skip_trivial
         self._debounce = debounce
         self._max_per_hour = max_replies_per_hour
+        self._quiet = quiet
+        self._char_delay_ms = char_delay_ms
+        self._max_typing_seconds = max_typing_seconds
+        self._now = now
+        self._was_quiet = False
         self._sleep = sleep
         self._clock = clock
         self._warned_empty = False
@@ -76,11 +87,24 @@ class Bot:
             window.popleft()
         return len(window) >= self._max_per_hour
 
+    def _typing_delay_ms(self, reply: str) -> float:
+        """Per-key delay, lowered so a long reply never types longer than the cap."""
+        if self._char_delay_ms <= 0 or not reply:
+            return 0.0
+        return min(self._char_delay_ms, self._max_typing_seconds * 1000 / len(reply))
+
     def step(self) -> str | None:
         """One poll. Returns the reply text if one was produced."""
         if not self._allowlist and not self._warned_empty:
             log.warning("ALLOWED_CHATS is empty: the bot answers nobody")
             self._warned_empty = True
+        if self._quiet is not None:
+            quiet_now = self._quiet.contains(self._now().time())
+            if quiet_now != self._was_quiet:
+                log.info("quiet hours %s", "started" if quiet_now else "ended")
+                self._was_quiet = quiet_now
+            if quiet_now:
+                return None
         chat = self._client.active_chat()
         if chat is None:
             return None
@@ -133,7 +157,7 @@ class Bot:
         scale = FRIEND_DELAY_SCALE if profile.relationship == "friend" else 1.0
         self._sleep(random.uniform(*self._delay) * scale)
         self._store.record_bot_text(chat_id, reply)
-        self._client.send(reply)
+        self._client.send(reply, self._typing_delay_ms(reply))
         self._store.mark_replied(chat_id, pending.wa_id)
         self._sent_at[chat_id].append(self._clock())
         return reply

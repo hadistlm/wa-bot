@@ -53,6 +53,9 @@ def main(argv: list[str] | None = None) -> int:
                 skip_trivial=settings.skip_trivial,
                 debounce=settings.debounce,
                 max_replies_per_hour=settings.max_replies_per_hour,
+                quiet=settings.quiet,
+                char_delay_ms=settings.typing_char_delay_ms,
+                max_typing_seconds=settings.max_typing_seconds,
                 delay=(settings.reply_delay_min, settings.reply_delay_max),
             )
             log.info("running%s. Ctrl+C to stop", " (dry run)" if args.dry_run else "")

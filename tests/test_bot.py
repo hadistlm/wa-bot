@@ -16,8 +16,9 @@ class FakeClient:
     def read_messages(self):
         return self.msgs
 
-    def send(self, text):
+    def send(self, text, char_delay_ms=0.0):
         self.sent.append(text)
+        self.delays = getattr(self, "delays", []) + [char_delay_ms]
 
 
 class FakeGen:
@@ -140,3 +141,33 @@ def test_bot_reply_not_used_as_own_example():
     c.msgs = [inc(1), Message("out1", "Me", "ok", "ts", True)]
     store.upsert_messages(chat_id, c.msgs)
     assert store.own_examples(chat_id) == []
+
+
+def test_quiet_hours_silent_then_resumes():
+    from datetime import datetime
+
+    from wabot.quiet import parse_quiet_hours
+
+    clock = [datetime(2026, 10, 29, 2, 0)]
+    c, g = FakeClient(msgs=[inc(1)]), FakeGen()
+    bot = make(c, g, quiet=parse_quiet_hours("23:00-07:00"), now=lambda: clock[0])
+    assert bot.step() is None and g.calls == []
+    clock[0] = datetime(2026, 10, 29, 8, 0)
+    assert bot.step() == "ok"
+
+
+def test_typing_delay_passed_and_capped():
+    c, g = FakeClient(msgs=[inc(1)]), FakeGen()
+    make(c, g, char_delay_ms=70, max_typing_seconds=20).step()
+    assert c.delays == [70]
+    long = FakeGen()
+    long.generate = lambda context, extra="": "x" * 1000
+    c2 = FakeClient(msgs=[inc(1)])
+    make(c2, long, char_delay_ms=70, max_typing_seconds=20).step()
+    assert c2.delays == [20.0]
+
+
+def test_no_typing_delay_by_default():
+    c, g = FakeClient(msgs=[inc(1)]), FakeGen()
+    make(c, g).step()
+    assert c.delays == [0.0]
