@@ -83,3 +83,10 @@ def test_chats_with_pending_and_find_chat_id():
         s.mark_replied(a, "id1")
         assert s.chats_with_pending() == []
         assert s.find_chat_id("Ani") == b and s.find_chat_id("Nobody") is None
+
+
+def test_creates_missing_parent_folders(tmp_path):
+    path = tmp_path / "data" / "nested" / "bot.db"
+    with Store(path) as s:
+        s.chat_id("X")
+    assert path.exists()

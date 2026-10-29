@@ -18,12 +18,13 @@ class Settings(BaseSettings):
         env_file=".env.local", env_file_encoding="utf-8", extra="ignore", frozen=True
     )
 
-    gemini_api_key: SecretStr
+    gemini_api_key: SecretStr = SecretStr("")
     gemini_model: str = "gemini-2.5-flash"
     gemini_temperature: float = 0.8
     gemini_max_output_tokens: int = 300
 
     persona_name: str = "Me"
+    own_names: str = ""
     persona_file: Path = Path("persona.md")
     persona_prompt: str = ""
 
@@ -35,8 +36,8 @@ class Settings(BaseSettings):
     poll_interval: float = Field(4.0, gt=0)
     reply_delay_min: float = Field(2.0, ge=0)
     reply_delay_max: float = Field(6.0, ge=0)
-    db_path: Path = Path("wabot.db")
-    profile_dir: Path = Path(".wa-profile")
+    db_path: Path = Path("data/wabot.db")
+    profile_dir: Path = Path("data/profile")
     browser_channel: str = ""
 
     quiet_hours: str = ""

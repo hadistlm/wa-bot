@@ -1,6 +1,7 @@
 .env.local
 .env
 .venv/
+data/
 .wa-profile/
 wabot.db*
 persona.md
