@@ -52,6 +52,10 @@ More options, all optional:
 | `AFK_ACKNOWLEDGE` | `false` | After a long spell, Gemini may add a short "sori baru bales". |
 | `AFK_ACK_MIN_MINUTES` | `5` | Shortest spell that counts as long. |
 | `SKIP_BACKLOG` | `true` | Do not answer messages that were waiting before the bot started. |
+| `WATCH_MODE` | `list` | `list` stays on the chat list and opens allowed chats that need an answer. `open` answers the chat you opened. |
+| `OPEN_DELAY_MIN` / `OPEN_DELAY_MAX` | `1` / `4` | Random pause before opening a chat from the list. |
+| `REPLY_GAP_MIN` / `REPLY_GAP_MAX` | `15` / `45` | Pause between answers to different chats. |
+| `HEADLESS` | `false` | Hide the browser window. A minimized window is safer than headless. |
 | `SKIP_TRIVIAL` | `true` | Ignore bare "ok", "makasih", "👍". |
 | `DEBOUNCE` | `true` | Wait one poll so a burst of messages gets one reply. |
 | `MAX_REPLIES_PER_HOUR` | `20` | Reply cap per chat. |
@@ -105,8 +109,16 @@ A new chat has no history, so the bot uses the plain persona until about 5 messa
 - **A late reply can mention the delay.** With `AFK_ACKNOWLEDGE=true` and a spell of at least `AFK_ACK_MIN_MINUTES`, Gemini may add a short phrase such as "sori baru bales" in the sender's language.
 - **If you answer by hand first,** the bot sees your message and stays quiet.
 - **If the sender never writes again,** the bot answers once after the spell, then sends nothing more. It never follows up or nudges.
-- **The chat must be open.** The bot only reads the chat shown in its browser window. A message waiting in another chat gets no reply until you open that chat.
+- **The chat must be in the visible list.** WhatsApp only renders the rows near the top. A waiting chat that has scrolled out of view cannot be opened, and the bot logs a warning.
 - **Restarts skip old messages.** With `SKIP_BACKLOG=true`, a message that was already waiting when the bot started gets no reply. The exception is a message that caused a spell still running at restart, which the bot answers after the spell.
+
+### Several messages at once
+
+The bot handles one chat at a time. If two chats get a message within a few seconds:
+- It answers the one that arrived first.
+- It waits `REPLY_GAP_MIN` to `REPLY_GAP_MAX` seconds, then opens and answers the second one. The second chat stays unread until its turn.
+- Every message rolls the AFK dice on its own turn. A spell pauses the whole queue, and the waiting chats are answered after it ends.
+- A follow-up in the chat you just answered is not held back by the gap.
 
 ## Log in once
 
@@ -130,7 +142,9 @@ Open the chat you want to test in the browser window. The bot prints replies in 
 python -m wabot
 ```
 
-Keep the target chat open in the window. Press Ctrl+C to stop.
+Leave the window on the chat list. The bot opens a chat only when it is in `ALLOWED_CHATS` and has a message waiting, answers, then returns to the list. Chats outside the list are never opened, read or answered. Press Ctrl+C to stop.
+
+To answer whichever chat you open yourself, set `WATCH_MODE=open`.
 
 ```mermaid
 graph LR
@@ -151,6 +165,7 @@ graph LR
 WhatsApp can ban accounts that automate messages, and no setting removes that risk. These steps help:
 
 - Answer only people who wrote to you first, and keep `ALLOWED_CHATS` short.
+- Keep the bot on the chat list. It never opens chats outside the allowlist.
 - Set `QUIET_HOURS` so the bot sleeps at night.
 - Keep `AFK_CHANCE` above 0 so the bot sometimes goes away for a few minutes, like a person would.
 - Keep the typing pause on (`TYPING_CHAR_DELAY_MS`) so replies look typed.
@@ -165,6 +180,7 @@ WhatsApp can ban accounts that automate messages, and no setting removes that ri
 - **The bot never replies:** the chat title probably does not match `ALLOWED_CHATS`. Run with `--dry-run` and read the log.
 - **Gemini error "fatal":** check `GEMINI_API_KEY` and `GEMINI_MODEL`.
 - **WhatsApp says the browser is unsupported:** set `BROWSER_CHANNEL=chrome`.
+- **The bot never opens a chat:** the title in the chat list must match an `ALLOWED_CHATS` entry, and the row must be unread or have a waiting message. A group stays unanswered unless `ALLOW_GROUPS=true`.
 - **Nothing is read from the chat:** WhatsApp changed its page. Update `src/wabot/whatsapp/selectors.py`.
 
 To read stored history: `sqlite3 wabot.db "select sender, text from messages order by id desc limit 10"`.
