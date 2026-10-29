@@ -3,6 +3,11 @@ import pytest
 from wabot.matching import match_rule, parse_allowlist
 
 
+def test_lover_and_family_tags_are_recognised():
+    parsed = parse_allowlist("Sari:lover, Dewi:friend, Ibu:Family")
+    assert parsed == {"Sari": "lover", "Dewi": "friend", "Ibu": "family"}
+
+
 def test_parse_allowlist_with_tags():
     parsed = parse_allowlist(" Budi:work, *Santoso* ,,+62 812, Ani:Friend, Eve:boss")
     assert parsed == {

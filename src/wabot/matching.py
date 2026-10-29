@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from difflib import SequenceMatcher
 from fnmatch import fnmatchcase
 
@@ -12,7 +12,7 @@ PHONE_MIN_DIGITS = 7
 PHONE_TAIL = 9
 
 
-TAGS = frozenset({"work", "friend"})
+TAGS = frozenset({"work", "friend", "lover", "family"})
 
 
 def parse_allowlist(raw: str) -> dict[str, str | None]:
@@ -87,3 +87,18 @@ def match_rule(title: str, allowlist: Iterable[str], threshold: float = 0.85) ->
         if SequenceMatcher(None, folded, folded_title).ratio() >= threshold:
             return f"fuzzy:{entry}"
     return None
+
+
+def allow_label(
+    title: str,
+    allowlist: Iterable[str],
+    tags: Mapping[str, str | None],
+    threshold: float = 0.85,
+) -> str:
+    """Say whether a chat is allowed and by which rule, for example "allowed (name), lover"."""
+    rule = match_rule(title, allowlist, threshold)
+    if rule is None:
+        return "not allowed"
+    kind, _, entry = rule.partition(":")
+    tag = tags.get(entry)
+    return f"allowed ({kind})" + (f", {tag}" if tag else "")
