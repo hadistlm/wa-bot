@@ -48,8 +48,9 @@ More options, all optional:
 | `POLL_INTERVAL` | `4` | Seconds between checks. |
 | `REPLY_DELAY_MIN` / `REPLY_DELAY_MAX` | `2` / `6` | Random pause before sending. Halved for friend chats. |
 | `QUIET_HOURS` | empty | Window with no replies, such as `23:00-07:00`. Messages that arrive meanwhile get answered once it ends. |
-| `TYPING_CHAR_DELAY_MS` | `70` | Pause per typed character. WhatsApp shows "typing..." while the bot types. `0` pastes instantly. |
-| `MAX_TYPING_SECONDS` | `20` | Upper limit for typing one reply. Long replies type faster to fit. |
+| `TYPING_CHAR_DELAY_MS` | `140` | Average pause per typed key, about 7 characters a second. WhatsApp shows "typing..." while the bot types. `0` pastes instantly. |
+| `TYPING_JITTER` | `0.4` | How uneven the keys are. `0` is a fixed rhythm, `1` is very uneven. |
+| `MAX_TYPING_SECONDS` | `20` | Upper limit for the keys of one reply. Long replies type faster to fit. |
 | `AFK_CHANCE` | `0.1` | Chance per incoming message that the bot goes AFK. `0` turns it off. |
 | `AFK_MIN_MINUTES` / `AFK_MAX_MINUTES` | `3` / `20` | How long an AFK spell lasts. |
 | `AFK_ACKNOWLEDGE` | `false` | After a long spell, Gemini may add a short "sori baru bales". |
@@ -134,7 +135,7 @@ Run these from the project folder with the virtual environment active (`source .
 | `python -m wabot --selftest` | Read-only check of the chat list. | no |
 | `python -m wabot --selftest --chat "Name"` | Also open that chat and check messages, compose box and Esc. | no |
 | `python -m wabot --dump-dom` | Save a redacted copy of the page structure to `data/dom/`. | no |
-| `python -m wabot --send-test "Name"` | Send one message, `wabot send test`, and check it appears. | no |
+| `python -m wabot --send-test "Name"` | Send one message, `wabot send test, please ignore`, typed like a real reply, and check it appears. | no |
 | `python -m wabot --dry-run` | Run the bot and print replies without sending. | yes |
 | `python -m wabot` | Run the bot for real. Ctrl+C stops it. | yes |
 
@@ -151,8 +152,10 @@ Options:
 1. **Log in.** `python -m wabot --login`. A browser opens with a QR code. On your phone go to WhatsApp, Settings, Linked Devices, Link a Device, and scan it. The login stays saved in `data/profile/`.
 2. **Check the page.** `python -m wabot --selftest --chat-index 1`. WhatsApp changes its page often, so this confirms the bot can read the chat list, open a chat, read messages and type. It never presses Enter. The report shows PASS, FAIL or INFO lines with counts only, no names or message text, so you can paste it when asking for help.
 3. **Dry run.** Put a friend in `ALLOWED_CHATS`, then `python -m wabot --dry-run`. Replies print in the terminal and nothing is sent.
-4. **Prove sending.** `python -m wabot --send-test "Your own chat"` sends exactly one message.
+4. **Prove sending.** `python -m wabot --send-test "Name"` sends exactly one message, typed with your `TYPING_*` settings. To see the typing animation, watch the browser window. To see "typing..." on the other side, send it to a friend who knows, because your own chat never shows an indicator.
 5. **Go live** with a low `MAX_REPLIES_PER_HOUR`: `python -m wabot`.
+
+`--selftest --chat` types a short probe into the compose box and deletes it. Use your own chat for it, because a contact would briefly see "typing...".
 
 `--selftest` and `--dump-dom` save a redacted copy of the page structure in `data/dom/`. Text, names, numbers, ids and image links are masked, so the files show only tags, classes and roles.
 
@@ -201,7 +204,7 @@ WhatsApp can ban accounts that automate messages, and no setting removes that ri
 - Keep the bot on the chat list. It never opens chats outside the allowlist.
 - Set `QUIET_HOURS` so the bot sleeps at night.
 - Keep `AFK_CHANCE` above 0 so the bot sometimes goes away for a few minutes, like a person would.
-- Keep the typing pause on (`TYPING_CHAR_DELAY_MS`) so replies look typed.
+- Keep the typing on (`TYPING_CHAR_DELAY_MS` above 0). Each reply waits a moment, types key by key at an uneven pace with small beats after spaces and punctuation, pauses, then presses Enter, so the other person sees "typing..." and the message does not land instantly.
 - Lower `MAX_REPLIES_PER_HOUR` to 6 to 10 and raise `REPLY_DELAY_MAX` to about 40.
 - Use an established number, not a new SIM.
 - Set `BROWSER_CHANNEL=chrome` and run the bot from the same machine each time.
