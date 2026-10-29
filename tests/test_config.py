@@ -25,3 +25,13 @@ def test_allowlist_property(tmp_path):
 def test_quiet_hours_setting(tmp_path):
     assert make(tmp_path).quiet is None
     assert make(tmp_path, quiet_hours="23:00-07:00").quiet is not None
+
+
+def test_afk_defaults(tmp_path):
+    s = make(tmp_path)
+    assert (s.afk_chance, s.afk_min_minutes, s.afk_max_minutes) == (0.1, 3.0, 20.0)
+
+
+def test_afk_ack_and_backlog_defaults(tmp_path):
+    s = make(tmp_path)
+    assert (s.afk_acknowledge, s.afk_ack_min_minutes, s.skip_backlog) == (False, 5.0, True)

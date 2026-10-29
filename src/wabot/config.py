@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     quiet_hours: str = ""
     typing_char_delay_ms: float = Field(70.0, ge=0)
     max_typing_seconds: float = Field(20.0, gt=0)
+    afk_chance: float = Field(0.1, ge=0.0, le=1.0)
+    afk_min_minutes: float = Field(3.0, ge=0)
+    afk_max_minutes: float = Field(20.0, ge=0)
+    afk_acknowledge: bool = False
+    afk_ack_min_minutes: float = Field(5.0, ge=0)
+    skip_backlog: bool = True
     skip_trivial: bool = True
     debounce: bool = True
     max_replies_per_hour: int = Field(20, ge=1)

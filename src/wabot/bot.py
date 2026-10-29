@@ -19,6 +19,8 @@ from wabot.store import Store
 
 log = logging.getLogger(__name__)
 FRIEND_DELAY_SCALE = 0.5
+AFK_UNTIL_KEY = "afk_until"
+AFK_BACK_KEY = "afk_back"  # "<chat_id>:<minutes>" until the first reply after a spell
 
 
 class ChatClient(Protocol):
@@ -49,6 +51,12 @@ class Bot:
         debounce: bool = False,
         max_replies_per_hour: int = 1000,
         quiet: QuietHours | None = None,
+        afk_chance: float = 0.0,
+        afk_minutes: tuple[float, float] = (3.0, 20.0),
+        afk_acknowledge: bool = False,
+        afk_ack_min_minutes: float = 5.0,
+        skip_backlog: bool = False,
+        rng: random.Random | None = None,
         char_delay_ms: float = 0.0,
         max_typing_seconds: float = 20.0,
         now: Callable[[], datetime] = datetime.now,
@@ -73,6 +81,14 @@ class Bot:
         self._max_typing_seconds = max_typing_seconds
         self._now = now
         self._was_quiet = False
+        self._afk_chance = afk_chance
+        self._afk_minutes = afk_minutes
+        self._afk_ack = afk_acknowledge
+        self._afk_ack_min = afk_ack_min_minutes
+        self._skip_backlog = skip_backlog
+        self._seen_chats: set[int] = set()
+        self._rng = rng or random.Random()
+        self._afk_until = float(store.get_state(AFK_UNTIL_KEY) or 0)
         self._sleep = sleep
         self._clock = clock
         self._warned_empty = False
@@ -93,6 +109,45 @@ class Bot:
             return 0.0
         return min(self._char_delay_ms, self._max_typing_seconds * 1000 / len(reply))
 
+    @staticmethod
+    def _rolled_key(chat_id: int) -> str:
+        return f"afk_rolled:{chat_id}"
+
+    def _afk_return(self, chat_id: int) -> float | None:
+        """Minutes the last spell lasted, if this chat holds the first reply after it."""
+        raw = self._store.get_state(AFK_BACK_KEY)
+        if not raw:
+            return None
+        owner, _, minutes = raw.partition(":")
+        return float(minutes) if owner == str(chat_id) else None
+
+    def _maybe_go_afk(self, chat_id: int, wa_id: str) -> bool:
+        """Roll once per incoming message. On a hit, stay away for a random spell.
+
+        The end time and the last rolled message per chat live in SQLite, so a restart
+        neither ends the spell early nor rolls the same message again.
+        """
+        rolled_key = self._rolled_key(chat_id)
+        if self._afk_chance <= 0 or self._store.get_state(rolled_key) == wa_id:
+            return False
+        self._store.set_state(rolled_key, wa_id)
+        if self._rng.random() >= self._afk_chance:
+            return False
+        minutes = self._rng.uniform(*self._afk_minutes)
+        self._afk_until = self._now().timestamp() + minutes * 60
+        self._store.set_state(AFK_UNTIL_KEY, str(self._afk_until))
+        self._store.set_state(AFK_BACK_KEY, f"{chat_id}:{minutes}")
+        log.info("going AFK for %.1f minutes", minutes)
+        return True
+
+    @staticmethod
+    def _back_hint(minutes: float) -> str:
+        return (
+            f"You were away from your phone for about {round(minutes)} minutes. If it fits, "
+            "acknowledge the delay in one short casual phrase in the sender's language "
+            "(for example 'sori baru bales'). Skip it if the message does not call for it."
+        )
+
     def step(self) -> str | None:
         """One poll. Returns the reply text if one was produced."""
         if not self._allowlist and not self._warned_empty:
@@ -105,6 +160,8 @@ class Bot:
                 self._was_quiet = quiet_now
             if quiet_now:
                 return None
+        if self._now().timestamp() < self._afk_until:
+            return None
         chat = self._client.active_chat()
         if chat is None:
             return None
@@ -118,9 +175,17 @@ class Bot:
 
         chat_id = self._store.chat_id(title)
         self._store.upsert_messages(chat_id, self._client.read_messages())
+        first_seen = chat_id not in self._seen_chats
+        self._seen_chats.add(chat_id)
         pending = self._store.pending_incoming(chat_id)
         if pending is None:
             self._last_pending.pop(chat_id, None)
+            if self._afk_return(chat_id) is not None:
+                self._store.set_state(AFK_BACK_KEY, "")  # you answered by hand meanwhile
+            return None
+        if first_seen and self._skip_backlog and self._afk_return(chat_id) is None:
+            log.info("chat=%r skipped message that was waiting before start", title)
+            self._store.mark_replied(chat_id, pending.wa_id)
             return None
         if (chat_id, pending.wa_id) in self._dry_seen:
             return None
@@ -136,8 +201,18 @@ class Bot:
             log.warning("chat=%r hit the hourly reply cap", title)
             return None
 
+        away = self._afk_return(chat_id)
+        if away is not None:
+            # First reply after a spell: no new roll, so spells never chain.
+            self._store.set_state(AFK_BACK_KEY, "")
+            self._store.set_state(self._rolled_key(chat_id), pending.wa_id)
+        elif self._maybe_go_afk(chat_id, pending.wa_id):
+            return None
+
         profile = build_profile(self._store.incoming_texts(chat_id), tag)
         extra = prompt_block(profile, self._store.own_examples(chat_id))
+        if away is not None and self._afk_ack and away >= self._afk_ack_min:
+            extra = f"{extra}\n{self._back_hint(away)}".strip()
         context = self._store.recent(chat_id, self._n)
         try:
             reply = self._generator.generate(context, extra)
@@ -145,6 +220,8 @@ class Bot:
             raise
         except ReplyError as exc:
             log.error("no reply for %r: %s", title, exc)
+            if away is not None:
+                self._store.set_state(AFK_BACK_KEY, f"{chat_id}:{away}")
             self._store.record_error(chat_id, pending.wa_id, str(exc))
             return None
 
