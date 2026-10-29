@@ -10,3 +10,9 @@ MESSAGE_TEXT = "span.selectable-text"
 PRE_PLAIN_ATTR = "data-pre-plain-text"
 PRE_PLAIN_HOLDER = "[data-pre-plain-text]"
 COMPOSE_BOX = "footer div[contenteditable='true']"
+
+# Chat list rows. Unverified against the live site.
+ROW = "#pane-side [role='listitem'], #pane-side [role='row']"
+ROW_TITLE = "span[dir='auto'][title]"
+ROW_UNREAD = "span[aria-label*='unread' i]"
+ROW_PREVIEW = "span[dir='ltr'], span.matched-text"

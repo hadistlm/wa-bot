@@ -8,8 +8,9 @@ from types import TracebackType
 from typing import Self
 
 from playwright.sync_api import BrowserContext, Page, Playwright, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from wabot.models import Message
+from wabot.models import ChatRow, Message
 from wabot.whatsapp import selectors as sel
 from wabot.whatsapp.parser import parse_message
 
@@ -33,7 +34,10 @@ class WhatsAppClient:
     def __enter__(self) -> Self:
         self._pw = sync_playwright().start()
         self._ctx = self._pw.chromium.launch_persistent_context(
-            str(self._profile_dir), headless=self._headless, channel=self._channel
+            str(self._profile_dir),
+            headless=self._headless,
+            channel=self._channel,
+            viewport={"width": 1366, "height": 900},
         )
         self.page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
         self.page.goto(URL)
@@ -65,6 +69,51 @@ class WhatsAppClient:
     def login(self, timeout_s: float = 180) -> None:
         """Wait for the user to scan the QR code."""
         self._page().wait_for_selector(sel.PANE_SIDE, timeout=timeout_s * 1000)
+
+    def chat_rows(self) -> list[ChatRow]:
+        """Rows currently rendered in the chat list. The list is virtualized."""
+        rows = self._page().locator(sel.ROW)
+        out: list[ChatRow] = []
+        for i in range(rows.count()):
+            row = rows.nth(i)
+            title_loc = row.locator(sel.ROW_TITLE).first
+            if title_loc.count() == 0:
+                continue
+            title = (title_loc.get_attribute("title") or title_loc.inner_text()).strip()
+            badge = row.locator(sel.ROW_UNREAD).first
+            unread = 0
+            if badge.count() > 0:
+                digits = "".join(
+                    c for c in (badge.get_attribute("aria-label") or "") if c.isdigit()
+                )
+                unread = int(digits) if digits else 1
+            preview_loc = row.locator(sel.ROW_PREVIEW).first
+            preview = preview_loc.inner_text().strip() if preview_loc.count() > 0 else ""
+            if title:
+                out.append(ChatRow(title, unread, preview))
+        return out
+
+    def open_chat(self, title: str) -> bool:
+        """Click the chat list row with this title. False if it is not rendered."""
+        page = self._page()
+        rows = page.locator(sel.ROW)
+        for i in range(rows.count()):
+            title_loc = rows.nth(i).locator(sel.ROW_TITLE).first
+            if title_loc.count() == 0:
+                continue
+            if (title_loc.get_attribute("title") or title_loc.inner_text()).strip() != title:
+                continue
+            rows.nth(i).click()
+            try:
+                page.wait_for_selector(sel.CHAT_HEADER, timeout=5000)
+            except PlaywrightTimeoutError:
+                return False
+            return True
+        return False
+
+    def close_chat(self) -> None:
+        """Return to the chat list view."""
+        self._page().keyboard.press("Escape")
 
     def active_chat(self) -> tuple[str, bool] | None:
         page = self._page()
