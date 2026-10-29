@@ -41,7 +41,8 @@ class Settings(BaseSettings):
     browser_channel: str = ""
 
     quiet_hours: str = ""
-    typing_char_delay_ms: float = Field(70.0, ge=0)
+    typing_char_delay_ms: float = Field(140.0, ge=0)
+    typing_jitter: float = Field(0.4, ge=0.0, le=1.0)
     max_typing_seconds: float = Field(20.0, gt=0)
     afk_chance: float = Field(0.1, ge=0.0, le=1.0)
     afk_min_minutes: float = Field(3.0, ge=0)

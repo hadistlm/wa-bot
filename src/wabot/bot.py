@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
+from wabot.human import TypingPlan, typing_plan
 from wabot.llm import FatalReplyError, ReplyError, ReplyGenerator
 from wabot.matching import match_rule
 from wabot.models import ChatRow, Message
@@ -37,7 +38,7 @@ class ChatClient(Protocol):
 
     def close_chat(self) -> None: ...
 
-    def send(self, text: str, char_delay_ms: float = 0.0) -> None: ...
+    def send(self, text: str, plan: TypingPlan | None = None) -> None: ...
 
 
 class Bot:
@@ -68,6 +69,7 @@ class Bot:
         reply_gap: tuple[float, float] = (0.0, 0.0),
         rng: random.Random | None = None,
         char_delay_ms: float = 0.0,
+        typing_jitter: float = 0.4,
         max_typing_seconds: float = 20.0,
         now: Callable[[], datetime] = datetime.now,
         sleep: Callable[[float], None] = time.sleep,
@@ -88,6 +90,7 @@ class Bot:
         self._max_per_hour = max_replies_per_hour
         self._quiet = quiet
         self._char_delay_ms = char_delay_ms
+        self._typing_jitter = typing_jitter
         self._max_typing_seconds = max_typing_seconds
         self._now = now
         self._was_quiet = False
@@ -124,11 +127,10 @@ class Bot:
             window.popleft()
         return len(window) >= self._max_per_hour
 
-    def _typing_delay_ms(self, reply: str) -> float:
-        """Per-key delay, lowered so a long reply never types longer than the cap."""
-        if self._char_delay_ms <= 0 or not reply:
-            return 0.0
-        return min(self._char_delay_ms, self._max_typing_seconds * 1000 / len(reply))
+    def _typing_plan(self, reply: str) -> TypingPlan | None:
+        return typing_plan(
+            reply, self._char_delay_ms, self._typing_jitter, self._max_typing_seconds, self._rng
+        )
 
     @staticmethod
     def _rolled_key(chat_id: int) -> str:
@@ -338,7 +340,7 @@ class Bot:
         scale = FRIEND_DELAY_SCALE if profile.relationship == "friend" else 1.0
         self._sleep(random.uniform(*self._delay) * scale)
         self._store.record_bot_text(chat_id, reply)
-        self._client.send(reply, self._typing_delay_ms(reply))
+        self._client.send(reply, self._typing_plan(reply))
         self._store.mark_replied(chat_id, pending.wa_id)
         self._sent_at[chat_id].append(self._clock())
         return reply

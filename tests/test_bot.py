@@ -16,9 +16,9 @@ class FakeClient:
     def read_messages(self):
         return self.msgs
 
-    def send(self, text, char_delay_ms=0.0):
+    def send(self, text, plan=None):
         self.sent.append(text)
-        self.delays = getattr(self, "delays", []) + [char_delay_ms]
+        self.plans = getattr(self, "plans", []) + [plan]
 
 
 class FakeGen:
@@ -156,21 +156,26 @@ def test_quiet_hours_silent_then_resumes():
     assert bot.step() == "ok"
 
 
-def test_typing_delay_passed_and_capped():
+def test_reply_is_typed_from_a_human_plan():
     c, g = FakeClient(msgs=[inc(1)]), FakeGen()
-    make(c, g, char_delay_ms=70, max_typing_seconds=20).step()
-    assert c.delays == [70]
+    make(c, g, char_delay_ms=140, typing_jitter=0.4, max_typing_seconds=20).step()
+    plan = c.plans[0]
+    assert plan is not None and len(plan.char_delays_ms) == len("ok")
+    assert plan.start_pause_ms > 0 and plan.enter_pause_ms > 0
+
+
+def test_long_reply_typing_is_capped():
     long = FakeGen()
     long.generate = lambda context, extra="": "x" * 1000
-    c2 = FakeClient(msgs=[inc(1)])
-    make(c2, long, char_delay_ms=70, max_typing_seconds=20).step()
-    assert c2.delays == [20.0]
+    c = FakeClient(msgs=[inc(1)])
+    make(c, long, char_delay_ms=140, max_typing_seconds=20).step()
+    assert c.plans[0].typing_ms <= 20_000 + 1
 
 
-def test_no_typing_delay_by_default():
+def test_no_plan_when_typing_is_off():
     c, g = FakeClient(msgs=[inc(1)]), FakeGen()
     make(c, g).step()
-    assert c.delays == [0.0]
+    assert c.plans == [None]
 
 
 class FixedRng:
@@ -350,7 +355,7 @@ class ListClient:
     def read_messages(self):
         return self.chats[self.open]["msgs"]
 
-    def send(self, text, char_delay_ms=0.0):
+    def send(self, text, plan=None):
         self.sent.append((self.open, text))
 
 

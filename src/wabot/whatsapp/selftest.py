@@ -14,13 +14,14 @@ from pathlib import Path
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
+from wabot.human import typing_plan
 from wabot.matching import match_rule
 from wabot.whatsapp import selectors as sel
 from wabot.whatsapp.client import WhatsAppClient
 from wabot.whatsapp.dump import dump_dom
 
 TYPING_PROBE = "wabot selftest"
-SEND_TEST_TEXT = "wabot send test"
+SEND_TEST_TEXT = "wabot send test, please ignore"
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,13 +181,24 @@ def _outgoing_count(client: WhatsAppClient, text: str) -> int:
     return sum(1 for m in client.read_messages() if m.outgoing and m.text == text)
 
 
-def send_test(client: WhatsAppClient, title: str, timeout_s: float = 8.0) -> list[Check]:
-    """Send exactly one short message to the named chat and confirm it shows up."""
+def send_test(
+    client: WhatsAppClient,
+    title: str,
+    char_delay_ms: float = 0.0,
+    jitter: float = 0.4,
+    max_typing_seconds: float = 20.0,
+    timeout_s: float = 8.0,
+) -> list[Check]:
+    """Send exactly one short message to the named chat and confirm it shows up.
+
+    It types with the same human schedule as a real reply, so the other person sees
+    "typing..." for a few seconds."""
     if not client.open_chat(title):
         return [Check("chat opens from the list", False)]
     checks = [Check("chat opens from the list", True)]
     before = _outgoing_count(client, SEND_TEST_TEXT)
-    client.send(SEND_TEST_TEXT, char_delay_ms=30)
+    plan = typing_plan(SEND_TEST_TEXT, char_delay_ms, jitter, max_typing_seconds)
+    client.send(SEND_TEST_TEXT, plan)
     deadline = time.monotonic() + timeout_s
     seen = False
     while time.monotonic() < deadline:

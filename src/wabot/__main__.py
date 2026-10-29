@@ -55,7 +55,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _diagnose(client: WhatsAppClient, args: argparse.Namespace) -> int:
+def _diagnose(client: WhatsAppClient, args: argparse.Namespace, settings: Settings) -> int:
     out = Path(args.out)
     if args.list_chats:
         for number, row in enumerate(client.chat_rows(), start=1):
@@ -75,7 +75,13 @@ def _diagnose(client: WhatsAppClient, args: argparse.Namespace) -> int:
         return 0 if paths else 1
     if args.send_test:
         log.warning("sending ONE test message to the chat you named")
-        checks = send_test(client, args.send_test)
+        checks = send_test(
+            client,
+            args.send_test,
+            settings.typing_char_delay_ms,
+            settings.typing_jitter,
+            settings.max_typing_seconds,
+        )
     else:
         name = args.chat
         if args.chat_index:
@@ -136,6 +142,7 @@ def _run_bot(client: WhatsAppClient, settings: Settings, args: argparse.Namespac
             afk_minutes=(settings.afk_min_minutes, settings.afk_max_minutes),
             delay=(settings.reply_delay_min, settings.reply_delay_max),
             char_delay_ms=settings.typing_char_delay_ms,
+            typing_jitter=settings.typing_jitter,
             max_typing_seconds=settings.max_typing_seconds,
         )
         log.info("running%s. Ctrl+C to stop", " (dry run)" if args.dry_run else "")
@@ -181,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         try:
             if diagnostic:
-                return _diagnose(client, args)
+                return _diagnose(client, args, settings)
             return _run_bot(client, settings, args)
         except PlaywrightError as exc:
             log.error("browser problem: %s", exc)

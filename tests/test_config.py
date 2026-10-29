@@ -45,3 +45,8 @@ def test_list_mode_defaults(tmp_path):
         15.0,
         45.0,
     )
+
+
+def test_typing_defaults(tmp_path):
+    s = make(tmp_path)
+    assert (s.typing_char_delay_ms, s.typing_jitter, s.max_typing_seconds) == (140.0, 0.4, 20.0)
