@@ -14,6 +14,7 @@ BEAT_AFTER = frozenset(" ,.!?;:\n")
 STALL_CHANCE = 0.02  # per key: the typist stops to think mid-sentence
 STALL_MS = (700.0, 2200.0)
 STALL_AFTER = 8  # no stall in the first few keys
+BETWEEN_PARTS_S = (1.2, 3.5)  # pause between the messages of one reply
 READ_BASE_S = 1.0
 READ_CAP_S = 12.0
 READ_SPREAD = (0.8, 1.3)

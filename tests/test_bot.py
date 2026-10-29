@@ -25,12 +25,13 @@ class FakeGen:
     def __init__(self, exc=None):
         self.exc, self.calls = exc, []
 
-    def generate(self, context, extra=""):
+    def generate(self, context, extra="", tone=None):
         self.calls.append(list(context))
         self.extras = getattr(self, "extras", []) + [extra]
+        self.tones = getattr(self, "tones", []) + [tone]
         if self.exc:
             raise self.exc
-        return "ok"
+        return getattr(self, "reply", "ok")
 
 
 def inc(i):

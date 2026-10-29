@@ -10,13 +10,14 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
-from wabot.human import TypingPlan, reading_seconds, typing_plan
+from wabot.human import BETWEEN_PARTS_S, TypingPlan, reading_seconds, typing_plan
 from wabot.llm import FatalReplyError, ReplyError, ReplyGenerator
 from wabot.matching import allow_label, match_rule
 from wabot.models import ChatRow, Message
 from wabot.profile import build_profile, is_trivial, prompt_block
 from wabot.quiet import QuietHours
 from wabot.store import Store
+from wabot.tone import rank_for, split_reply, tone_for
 
 log = logging.getLogger(__name__)
 MAX_LOGGED_CHARS = 200
@@ -262,6 +263,10 @@ class Bot:
         self._beat("open chat mode")
         return self._handle_open_chat(debounce=self._debounce, backlog_check=self._skip_backlog)
 
+    def _tag_of(self, title: str) -> str | None:
+        rule = match_rule(title, self._allowlist, self._threshold)
+        return self._tags.get(rule.split(":", 1)[1]) if rule else None
+
     def _allowed(self, title: str) -> bool:
         return match_rule(title, self._allowlist, self._threshold) is not None
 
@@ -280,7 +285,7 @@ class Bot:
                 self._unread_since.pop(row.title, None)
                 self._baseline.pop(row.title, None)
                 self._reasons.pop(row.title, None)
-        ready: list[tuple[float, int, str, str]] = []
+        ready: list[tuple[int, float, int, str, str]] = []
         for index, row in enumerate(rows):
             if not row.unread:
                 continue
@@ -302,9 +307,17 @@ class Bot:
             if self._cooling(row.title):
                 self._note(row.title, "cooling down after a failed attempt")
                 continue
-            ready.append((self._unread_since[row.title], index, row.title, f"{row.unread} unread"))
+            ready.append(
+                (
+                    rank_for(self._tag_of(row.title)),
+                    self._unread_since[row.title],
+                    index,
+                    row.title,
+                    f"{row.unread} unread",
+                )
+            )
         if ready:
-            _, _, title, why = min(ready)  # oldest waiting chat first, not the top of the list
+            _, _, _, title, why = min(ready)  # lover, family, then oldest first
             return title, why
         visible = {r.title for r in rows}
         for chat_id, title, wa_id in self._store.chats_with_pending():
@@ -414,8 +427,12 @@ class Bot:
         if away is not None and self._afk_ack and away >= self._afk_ack_min:
             extra = f"{extra}\n{self._back_hint(away)}".strip()
         context = self._store.recent(chat_id, self._n)
+        tone = tone_for(profile.relationship)
         try:
-            reply = self._generator.generate(context, extra)
+            if tone is None:
+                reply = self._generator.generate(context, extra)
+            else:
+                reply = self._generator.generate(context, extra, tone)
         except FatalReplyError:
             raise
         except ReplyError as exc:
@@ -430,26 +447,38 @@ class Bot:
         )
         reading = self._reading_seconds(unanswered)
         thinking = self._rng.uniform(*self._delay) if self._delay[1] > 0 else 0.0
-        plan = self._typing_plan(reply)
-        typing_s = (
-            (plan.start_pause_ms + plan.typing_ms + plan.enter_pause_ms) / 1000 if plan else 0.0
-        )
+        parts = split_reply(reply, tone)
+        plans = [self._typing_plan(part) for part in parts]
+        gaps = [self._rng.uniform(*BETWEEN_PARTS_S) for _ in parts[1:]]
+        typing_s = sum(
+            (p.start_pause_ms + p.typing_ms + p.enter_pause_ms) / 1000 for p in plans if p
+        ) + sum(gaps)
         log.info(
-            "%s: reading %.1f s, thinking %.1f s, then typing %d characters (about %.1f s)",
+            "%s: reading %.1f s, thinking %.1f s, then typing %d characters in %d message(s) "
+            "(about %.1f s)",
             title,
             reading,
             thinking,
             len(reply),
+            len(parts),
             typing_s,
         )
         if self._dry_run:
             self._dry_seen.add((chat_id, pending.wa_id))
+            if len(parts) > 1 and self._log_messages:
+                for number, part in enumerate(parts, start=1):
+                    log.info("  message %d of %d: %s", number, len(parts), part)
             log.info("%s: dry run, nothing sent", title)
             return reply
         self._sleep(reading + thinking)
-        self._store.record_bot_text(chat_id, reply)
-        self._client.send(reply, plan)
-        log.info("%s: sent", title)
-        self._store.mark_replied(chat_id, pending.wa_id)
+        for index, (part, plan) in enumerate(zip(parts, plans, strict=True)):
+            if index:
+                self._sleep(gaps[index - 1])
+            self._store.record_bot_text(chat_id, part)
+            self._client.send(part, plan)
+            if index == 0:
+                # Marked after the first part, so a failure halfway never repeats the reply.
+                self._store.mark_replied(chat_id, pending.wa_id)
+        log.info("%s: sent%s", title, f" {len(parts)} messages" if len(parts) > 1 else "")
         self._sent_at[chat_id].append(self._clock())
         return reply
