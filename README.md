@@ -1,4 +1,4 @@
-# wabot
+# wa-bot
 
 A bot that answers WhatsApp messages for you. It watches one chat you choose, asks Gemini for a reply in your voice, and sends it.
 
@@ -13,8 +13,8 @@ A bot that answers WhatsApp messages for you. It watches one chat you choose, as
 ## Install
 
 ```bash
-git clone https://github.com/pjha91275/Whatsapp-Reply-Bot.git
-cd Whatsapp-Reply-Bot
+git clone https://github.com/hadistlm/wa-bot.git
+cd wa-bot
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e .
 playwright install chromium
