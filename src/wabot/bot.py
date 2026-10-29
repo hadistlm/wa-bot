@@ -123,6 +123,8 @@ class Bot:
         self._last_beat = clock()
         self._reasons: dict[str, str] = {}
         self._read_per_word = read_seconds_per_word
+        self.replied_chats: set[str] = set()
+        self.messages_sent = 0
         self._log_messages = log_messages
         self._logged: set[tuple[int, str]] = set()
         self._was_afk = False
@@ -476,9 +478,11 @@ class Bot:
                 self._sleep(gaps[index - 1])
             self._store.record_bot_text(chat_id, part)
             self._client.send(part, plan)
+            self.messages_sent += 1
             if index == 0:
                 # Marked after the first part, so a failure halfway never repeats the reply.
                 self._store.mark_replied(chat_id, pending.wa_id)
+        self.replied_chats.add(title)
         log.info("%s: sent%s", title, f" {len(parts)} messages" if len(parts) > 1 else "")
         self._sent_at[chat_id].append(self._clock())
         return reply
