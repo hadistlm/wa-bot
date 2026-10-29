@@ -6,6 +6,8 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from wabot.tone import tone_for
+
 MIN_SAMPLES = 5
 _WORD = re.compile(r"[a-zA-Z']+")
 
@@ -105,7 +107,7 @@ def prompt_block(profile: ChatProfile, own_examples: Sequence[str]) -> str:
             parts.append(f"they write about {profile.avg_words} words per message")
         if parts:
             lines.append("Chat context: " + ", ".join(parts) + ".")
-        if ready and profile.avg_words:
+        if ready and profile.avg_words and tone_for(profile.relationship) is None:
             lines.append(
                 f"Keep your reply near {max(profile.avg_words, 3)} words "
                 "unless a question needs more."
