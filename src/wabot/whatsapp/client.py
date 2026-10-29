@@ -98,8 +98,18 @@ class WhatsAppClient:
                 out.append(msg)
         return out
 
-    def send(self, text: str) -> None:
-        box = self._page().locator(sel.COMPOSE_BOX).last
+    def send(self, text: str, char_delay_ms: float = 0.0) -> None:
+        """Type the reply key by key so WhatsApp shows "typing...", then press Enter."""
+        page = self._page()
+        box = page.locator(sel.COMPOSE_BOX).last
         box.click()
-        box.fill(text)
-        self._page().keyboard.press("Enter")
+        for i, line in enumerate(text.split("\n")):
+            if i:
+                page.keyboard.press("Shift+Enter")
+            if char_delay_ms > 0:
+                box.press_sequentially(line, delay=char_delay_ms)
+            elif i == 0:
+                box.fill(line)
+            else:
+                page.keyboard.insert_text(line)
+        page.keyboard.press("Enter")
