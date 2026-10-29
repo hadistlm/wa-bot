@@ -10,7 +10,7 @@ from typing import Self
 
 from wabot.models import Message
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chats (
     id INTEGER PRIMARY KEY,
@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS messages (
     reply_error TEXT,
     by_bot INTEGER NOT NULL DEFAULT 0,
     UNIQUE(chat_id, wa_id)
+);
+CREATE TABLE IF NOT EXISTS bot_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bot_texts (
     id INTEGER PRIMARY KEY,
@@ -64,6 +68,18 @@ class Store:
 
     def close(self) -> None:
         self._conn.close()
+
+    def get_state(self, key: str) -> str | None:
+        row = self._conn.execute("SELECT value FROM bot_state WHERE key=?", (key,)).fetchone()
+        return None if row is None else str(row["value"])
+
+    def set_state(self, key: str, value: str) -> None:
+        self._conn.execute(
+            "INSERT INTO bot_state(key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        self._conn.commit()
 
     def chat_id(self, title: str) -> int:
         self._conn.execute(

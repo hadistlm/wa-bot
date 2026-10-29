@@ -64,3 +64,11 @@ def test_migrates_v1_db(tmp_path):
         c = s.chat_id("X")
         s.upsert_messages(c, [msg(1, out=True)])
         assert s.own_examples(c) == ["t1"]
+
+
+def test_state_roundtrip():
+    with Store(":memory:") as s:
+        assert s.get_state("k") is None
+        s.set_state("k", "1")
+        s.set_state("k", "2")
+        assert s.get_state("k") == "2"
