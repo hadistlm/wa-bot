@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
-from wabot.human import TypingPlan, typing_plan
+from wabot.human import TypingPlan, reading_seconds, typing_plan
 from wabot.llm import FatalReplyError, ReplyError, ReplyGenerator
 from wabot.matching import allow_label, match_rule
 from wabot.models import ChatRow, Message
@@ -19,7 +19,7 @@ from wabot.quiet import QuietHours
 from wabot.store import Store
 
 log = logging.getLogger(__name__)
-FRIEND_DELAY_SCALE = 0.5
+MAX_LOGGED_CHARS = 200
 AFK_UNTIL_KEY = "afk_until"
 RETRY_COOLDOWN_S = 60.0
 AFK_BACK_KEY = "afk_back"  # "<chat_id>:<minutes>" until the first reply after a spell
@@ -67,6 +67,8 @@ class Bot:
         watch_mode: str = "open",
         open_delay: tuple[float, float] = (0.0, 0.0),
         heartbeat_minutes: float = 0.0,
+        read_seconds_per_word: float = 0.0,
+        log_messages: bool = True,
         reply_gap: tuple[float, float] = (0.0, 0.0),
         rng: random.Random | None = None,
         char_delay_ms: float = 0.0,
@@ -119,6 +121,9 @@ class Bot:
         self._heartbeat_s = heartbeat_minutes * 60
         self._last_beat = clock()
         self._reasons: dict[str, str] = {}
+        self._read_per_word = read_seconds_per_word
+        self._log_messages = log_messages
+        self._logged: set[tuple[int, str]] = set()
         self._was_afk = False
         self._warned_empty = False
         self._dry_seen: set[tuple[int, str]] = set()
@@ -131,6 +136,28 @@ class Bot:
         while window and now - window[0] > 3600:
             window.popleft()
         return len(window) >= self._max_per_hour
+
+    def _reading_seconds(self, unanswered: Sequence[Message]) -> float:
+        words = sum(len(m.text.split()) for m in unanswered if m.text != "[media]")
+        return reading_seconds(words, self._read_per_word, self._rng)
+
+    def _log_received(
+        self, title: str, chat_id: int, wa_id: str, unanswered: Sequence[Message]
+    ) -> None:
+        """Log what they sent, once per waiting message. Text only if log_messages is on."""
+        if (chat_id, wa_id) in self._logged:
+            return
+        self._logged.add((chat_id, wa_id))
+        if not self._log_messages:
+            chars = sum(len(m.text) for m in unanswered)
+            log.info(
+                "%s: %d new message(s) from them, %d characters", title, len(unanswered), chars
+            )
+            return
+        log.info("%s: %d new message(s) from them:", title, len(unanswered))
+        for m in unanswered:
+            text = m.text if len(m.text) <= MAX_LOGGED_CHARS else m.text[:MAX_LOGGED_CHARS] + "..."
+            log.info("  [%s] %s: %s", m.sent_at, m.sender, text)
 
     def _typing_plan(self, reply: str) -> TypingPlan | None:
         return typing_plan(
@@ -311,12 +338,13 @@ class Bot:
             self._note(title, "waiting for the reply gap so two chats are not answered together")
             return None  # another chat was just answered: wait for the gap, one at a time
         self._reasons.pop(title, None)
-        log.info("%s: opening (%s)", title, why)
+        log.info("%s: opening chat (%s)", title, why)
         self._sleep(self._rng.uniform(*self._open_delay))
         if not self._client.open_chat(title):
             log.warning("chat=%r could not be opened", title)
             self._cooldown_until[title] = self._clock() + RETRY_COOLDOWN_S
             return None
+        log.info("%s: chat opened", title)
         try:
             reply = self._handle_open_chat(debounce=False, backlog_check=False)
         finally:
@@ -353,6 +381,8 @@ class Bot:
             if self._afk_return(chat_id) is not None:
                 self._store.set_state(AFK_BACK_KEY, "")  # you answered by hand meanwhile
             return None
+        unanswered = self._store.unanswered_incoming(chat_id)
+        self._log_received(title, chat_id, pending.wa_id, unanswered)
         if first_seen and backlog_check and self._afk_return(chat_id) is None:
             log.info("chat=%r skipped message that was waiting before start", title)
             self._store.mark_replied(chat_id, pending.wa_id)
@@ -398,13 +428,28 @@ class Bot:
         log.info(
             "chat=%r rule=%s relationship=%s reply=%r", title, rule, profile.relationship, reply
         )
+        reading = self._reading_seconds(unanswered)
+        thinking = self._rng.uniform(*self._delay) if self._delay[1] > 0 else 0.0
+        plan = self._typing_plan(reply)
+        typing_s = (
+            (plan.start_pause_ms + plan.typing_ms + plan.enter_pause_ms) / 1000 if plan else 0.0
+        )
+        log.info(
+            "%s: reading %.1f s, thinking %.1f s, then typing %d characters (about %.1f s)",
+            title,
+            reading,
+            thinking,
+            len(reply),
+            typing_s,
+        )
         if self._dry_run:
             self._dry_seen.add((chat_id, pending.wa_id))
+            log.info("%s: dry run, nothing sent", title)
             return reply
-        scale = FRIEND_DELAY_SCALE if profile.relationship == "friend" else 1.0
-        self._sleep(random.uniform(*self._delay) * scale)
+        self._sleep(reading + thinking)
         self._store.record_bot_text(chat_id, reply)
-        self._client.send(reply, self._typing_plan(reply))
+        self._client.send(reply, plan)
+        log.info("%s: sent", title)
         self._store.mark_replied(chat_id, pending.wa_id)
         self._sent_at[chat_id].append(self._clock())
         return reply

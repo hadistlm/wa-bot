@@ -49,4 +49,6 @@ def test_list_mode_defaults(tmp_path):
 
 def test_typing_defaults(tmp_path):
     s = make(tmp_path)
-    assert (s.typing_char_delay_ms, s.typing_jitter, s.max_typing_seconds) == (140.0, 0.4, 20.0)
+    assert (s.typing_char_delay_ms, s.typing_jitter, s.max_typing_seconds) == (200.0, 0.4, 30.0)
+    assert (s.reply_delay_min, s.reply_delay_max) == (4.0, 12.0)
+    assert (s.read_seconds_per_word, s.log_messages) == (0.25, True)

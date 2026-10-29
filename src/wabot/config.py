@@ -34,16 +34,18 @@ class Settings(BaseSettings):
 
     context_messages: int = Field(5, ge=1, le=50)
     poll_interval: float = Field(4.0, gt=0)
-    reply_delay_min: float = Field(2.0, ge=0)
-    reply_delay_max: float = Field(6.0, ge=0)
+    reply_delay_min: float = Field(4.0, ge=0)
+    reply_delay_max: float = Field(12.0, ge=0)
     db_path: Path = Path("data/wabot.db")
     profile_dir: Path = Path("data/profile")
     browser_channel: str = ""
 
     quiet_hours: str = ""
-    typing_char_delay_ms: float = Field(140.0, ge=0)
+    typing_char_delay_ms: float = Field(200.0, ge=0)
     typing_jitter: float = Field(0.4, ge=0.0, le=1.0)
-    max_typing_seconds: float = Field(20.0, gt=0)
+    max_typing_seconds: float = Field(30.0, gt=0)
+    read_seconds_per_word: float = Field(0.25, ge=0)
+    log_messages: bool = True
     afk_chance: float = Field(0.1, ge=0.0, le=1.0)
     afk_min_minutes: float = Field(3.0, ge=0)
     afk_max_minutes: float = Field(20.0, ge=0)

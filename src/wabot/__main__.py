@@ -163,6 +163,8 @@ def _run_bot(client: WhatsAppClient, settings: Settings, args: argparse.Namespac
             watch_mode=settings.watch_mode,
             open_delay=(settings.open_delay_min, settings.open_delay_max),
             heartbeat_minutes=settings.heartbeat_minutes,
+            read_seconds_per_word=settings.read_seconds_per_word,
+            log_messages=settings.log_messages,
             reply_gap=(settings.reply_gap_min, settings.reply_gap_max),
             afk_chance=settings.afk_chance,
             afk_minutes=(settings.afk_min_minutes, settings.afk_max_minutes),

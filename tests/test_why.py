@@ -54,7 +54,7 @@ def test_opening_is_logged_with_the_unread_count(caplog):
     c = ListClient({"Budi": chat(3, inc(1))})
     with caplog.at_level(logging.INFO):
         list_bot(c).step()
-    assert "Budi: opening (3 unread)" in info(caplog)
+    assert "Budi: opening chat (3 unread)" in info(caplog)
 
 
 def test_reply_gap_is_explained(caplog):
@@ -154,3 +154,107 @@ def test_list_chats_command_prints_the_verdict(capsys, tmp_path):
     out = capsys.readouterr().out
     assert "1. Sari  [unread 5]  -> allowed (name), lover" in out
     assert "2. Rudi  -> not allowed" in out
+
+
+# ---------------- what they sent, reading time and the reply timeline
+import random  # noqa: E402
+
+from test_bot import FakeClient, FakeGen, make  # noqa: E402
+
+from wabot.llm import ReplyError  # noqa: E402
+
+
+def words_msg(i, text):
+    return Message(f"id{i}", "Dewi", text, "14:05, 29/10/2026", False)
+
+
+def test_incoming_messages_are_logged_once_with_time_and_sender(caplog):
+    c = FakeClient(msgs=[words_msg(1, "kamu udah makan belum?"), words_msg(2, "jangan lupa yaa")])
+    bot = make(c, FakeGen(ReplyError("boom")))  # stays pending: step twice, log once
+    with caplog.at_level(logging.INFO):
+        bot.step()
+        bot.step()
+    lines = info(caplog)
+    assert lines.count("Budi: 2 new message(s) from them:") == 1
+    assert "  [14:05, 29/10/2026] Dewi: kamu udah makan belum?" in lines
+    assert "  [14:05, 29/10/2026] Dewi: jangan lupa yaa" in lines
+
+
+def test_long_messages_are_cut_in_the_log(caplog):
+    c = FakeClient(msgs=[words_msg(1, "x" * 500)])
+    with caplog.at_level(logging.INFO):
+        make(c, FakeGen()).step()
+    line = next(m for m in info(caplog) if m.startswith("  ["))
+    assert line.endswith("x" * 200 + "...") and len(line) < 260
+
+
+def test_message_text_can_be_left_out_of_the_log(caplog):
+    c = FakeClient(msgs=[words_msg(1, "rahasia banget")])
+    with caplog.at_level(logging.INFO):
+        make(c, FakeGen(), log_messages=False).step()
+    text = "\n".join(info(caplog))
+    assert "rahasia" not in text
+    assert "Budi: 1 new message(s) from them, 14 characters" in text
+
+
+def test_chat_opened_is_logged_in_list_mode(caplog):
+    from test_bot import ListClient, chat, list_bot
+
+    c = ListClient({"Budi": chat(1, inc(1))})
+    with caplog.at_level(logging.INFO):
+        list_bot(c).step()
+    lines = info(caplog)
+    assert lines.index("Budi: opening chat (1 unread)") < lines.index("Budi: chat opened")
+
+
+def paced_bot(msgs, tag=None, **kw):
+    slept = []
+    c = FakeClient(msgs=msgs)
+    kw.setdefault("delay", (5.0, 5.0))
+    kw.setdefault("read_seconds_per_word", 1.0)
+    bot = make(
+        c,
+        FakeGen(),
+        tags={"Budi": tag} if tag else None,
+        rng=random.Random(7),
+        sleep=slept.append,
+        **kw,
+    )
+    return bot, c, slept
+
+
+def test_reply_waits_for_reading_and_thinking_before_typing(caplog):
+    bot, c, slept = paced_bot([words_msg(1, "satu dua tiga")])
+    with caplog.at_level(logging.INFO):
+        bot.step()
+    # reading: (1 + 3 words) s with 0.8 to 1.3 spread, thinking exactly 5 s
+    assert 3.2 + 5 <= slept[0] <= 5.2 + 5
+    assert any("reading" in m and "thinking 5.0 s" in m for m in info(caplog))
+    assert "Budi: sent" in info(caplog)
+    assert c.sent == ["ok"]
+
+
+def test_longer_message_means_longer_reading():
+    short, _, s1 = paced_bot([words_msg(1, "ya")])
+    long, _, s2 = paced_bot([words_msg(1, " ".join(["kata"] * 30))])
+    short.step()
+    long.step()
+    assert s2[0] > s1[0]
+
+
+def test_friend_chats_get_the_same_delay_as_everyone():
+    plain, _, s1 = paced_bot([words_msg(1, "halo kamu")])
+    friend, _, s2 = paced_bot([words_msg(1, "halo kamu")], tag="friend")
+    plain.step()
+    friend.step()
+    assert s1 == s2
+
+
+def test_dry_run_logs_the_timeline_but_never_waits(caplog):
+    bot, c, slept = paced_bot([words_msg(1, "halo")], dry_run=True, char_delay_ms=200)
+    with caplog.at_level(logging.INFO):
+        assert bot.step() == "ok"
+    assert slept == [] and c.sent == []
+    lines = info(caplog)
+    assert any("then typing 2 characters" in m for m in lines)
+    assert "Budi: dry run, nothing sent" in lines
