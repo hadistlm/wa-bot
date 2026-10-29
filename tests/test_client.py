@@ -89,3 +89,61 @@ def test_reads_chat_list_and_opens_a_row():
         assert client.active_chat() == ("Ani", False)
         assert client.open_chat("Nobody") is False
         browser.close()
+
+
+REAL_LIST = """
+<div id="pane-side"><div role="grid" aria-label="Chat list">
+  <div role="row" data-testid="list-item-0"><div role="gridcell"><div aria-selected="false">
+    <div data-testid="cell-frame-container">
+      <div data-testid="cell-frame-title"><span>1 unread message</span>
+        <span dir="auto" title="Vira">Vira</span></div>
+      <span data-testid="chat-list-timestamp">13:42</span>
+      <div data-testid="cell-frame-secondary"><span data-testid="last-msg-status"
+        title="let see ya">let see ya</span>
+        <span data-testid="icon-unread-count" aria-label="1 unread message">1</span></div>
+    </div></div></div></div>
+  <div role="row" data-testid="list-item-1"><div role="gridcell"><div aria-selected="true">
+    <div data-testid="cell-frame-container">
+      <div data-testid="cell-frame-title"><span>unread</span>
+        <span dir="auto" title="Masday">Masday</span></div>
+      <div data-testid="cell-frame-secondary"><span>uyy</span></div>
+    </div></div></div></div>
+  <div role="row" data-testid="list-item-2"><div role="gridcell"><div aria-selected="false">
+    <div data-testid="cell-frame-container">
+      <div data-testid="cell-frame-title"><span dir="auto" title="Wa Eti">Wa Eti</span></div>
+      <div data-testid="cell-frame-secondary"><span>ok</span></div>
+    </div></div></div></div>
+</div></div>
+"""
+
+
+def test_reads_the_real_chat_list_structure():
+    sync = pytest.importorskip("playwright.sync_api")
+    with sync.sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Exception:
+            pytest.skip("no chromium")
+        page = browser.new_page()
+        page.set_content(REAL_LIST)
+        client = WhatsAppClient.__new__(WhatsAppClient)
+        client.page = page
+        rows = client.chat_rows()
+        assert [(r.title, r.unread) for r in rows] == [("Vira", 1), ("Masday", 1), ("Wa Eti", 0)]
+        assert "uyy" in rows[1].preview and "let see ya" in rows[0].preview
+        browser.close()
+
+
+def test_active_chat_falls_back_to_the_selected_row():
+    sync = pytest.importorskip("playwright.sync_api")
+    with sync.sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Exception:
+            pytest.skip("no chromium")
+        page = browser.new_page()
+        page.set_content(REAL_LIST + '<div id="main"></div>')
+        client = WhatsAppClient.__new__(WhatsAppClient)
+        client.page = page
+        assert client.active_chat() == ("Masday", False)
+        browser.close()
