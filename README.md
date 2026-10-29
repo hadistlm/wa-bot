@@ -22,6 +22,8 @@ cp .env.example .env.local
 cp persona.example.md persona.md
 ```
 
+All commands are listed in [Commands](#commands).
+
 ## Configure
 
 Open `.env.local` and set at least these:
@@ -31,6 +33,7 @@ Open `.env.local` and set at least these:
 | `GEMINI_API_KEY` | `AIza...` | Your Gemini key. Required. |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Any Gemini model name. |
 | `PERSONA_NAME` | `Budi` | Your name. Fills `{name}` in the persona. |
+| `OWN_NAMES` | empty | The name WhatsApp shows on your own messages, if the bot misreads them as incoming. It learns the name by itself. |
 | `ALLOWED_CHATS` | `Budi,+62 812 3456 7890,*Santoso*` | Who the bot answers. See below. |
 | `CONTEXT_MESSAGES` | `5` | How many recent messages Gemini sees. |
 
@@ -60,8 +63,8 @@ More options, all optional:
 | `DEBOUNCE` | `true` | Wait one poll so a burst of messages gets one reply. |
 | `MAX_REPLIES_PER_HOUR` | `20` | Reply cap per chat. |
 | `GEMINI_TEMPERATURE` | `0.8` | Higher means more varied replies. |
-| `DB_PATH` | `wabot.db` | SQLite file with chat history. |
-| `PROFILE_DIR` | `.wa-profile` | Saved WhatsApp login. |
+| `DB_PATH` | `data/wabot.db` | SQLite file with chat history. |
+| `PROFILE_DIR` | `data/profile` | Saved WhatsApp login. |
 | `BROWSER_CHANNEL` | empty | Set to `chrome` to use installed Chrome. |
 
 ### Choose who the bot answers
@@ -120,31 +123,42 @@ The bot handles one chat at a time. If two chats get a message within a few seco
 - Every message rolls the AFK dice on its own turn. A spell pauses the whole queue, and the waiting chats are answered after it ends.
 - A follow-up in the chat you just answered is not held back by the gap.
 
-## Log in once
+## Commands
 
-```bash
-python -m wabot --login
-```
+Run these from the project folder with the virtual environment active (`source .venv/bin/activate`).
 
-A browser window opens with a QR code. On your phone, go to WhatsApp, then Settings, then Linked Devices, then Link a Device, and scan it. The session stays saved in `.wa-profile/`.
+| Command | What it does | Gemini key |
+|---|---|---|
+| `python -m wabot --login` | Open WhatsApp Web and scan the QR code. Do this once. | no |
+| `python -m wabot --list-chats` | Print the chats in the list, numbered. | no |
+| `python -m wabot --selftest` | Read-only check of the chat list. | no |
+| `python -m wabot --selftest --chat "Name"` | Also open that chat and check messages, compose box and Esc. | no |
+| `python -m wabot --dump-dom` | Save a redacted copy of the page structure to `data/dom/`. | no |
+| `python -m wabot --send-test "Name"` | Send one message, `wabot send test`, and check it appears. | no |
+| `python -m wabot --dry-run` | Run the bot and print replies without sending. | yes |
+| `python -m wabot` | Run the bot for real. Ctrl+C stops it. | yes |
 
-## Try it safely
+Options:
 
-```bash
-python -m wabot --dry-run
-```
+| Option | Works with | What it does |
+|---|---|---|
+| `--chat "Name"` | `--selftest`, `--dump-dom` | Pick a chat by name. Case, accents and small typos are fine. |
+| `--chat-index N` | `--selftest`, `--dump-dom` | Pick the Nth chat in the list instead (1 is the top row). |
+| `--out DIR` | `--selftest`, `--dump-dom` | Folder for the page dumps. Default `data/dom`. |
 
-Open the chat you want to test in the browser window. The bot prints replies in the terminal and sends nothing.
+### First run, step by step
+
+1. **Log in.** `python -m wabot --login`. A browser opens with a QR code. On your phone go to WhatsApp, Settings, Linked Devices, Link a Device, and scan it. The login stays saved in `data/profile/`.
+2. **Check the page.** `python -m wabot --selftest --chat-index 1`. WhatsApp changes its page often, so this confirms the bot can read the chat list, open a chat, read messages and type. It never presses Enter. The report shows PASS, FAIL or INFO lines with counts only, no names or message text, so you can paste it when asking for help.
+3. **Dry run.** Put a friend in `ALLOWED_CHATS`, then `python -m wabot --dry-run`. Replies print in the terminal and nothing is sent.
+4. **Prove sending.** `python -m wabot --send-test "Your own chat"` sends exactly one message.
+5. **Go live** with a low `MAX_REPLIES_PER_HOUR`: `python -m wabot`.
+
+`--selftest` and `--dump-dom` save a redacted copy of the page structure in `data/dom/`. Text, names, numbers, ids and image links are masked, so the files show only tags, classes and roles.
 
 ## Run it
 
-```bash
-python -m wabot
-```
-
-Leave the window on the chat list. The bot opens a chat only when it is in `ALLOWED_CHATS` and has a message waiting, answers, then returns to the list. Chats outside the list are never opened, read or answered. Press Ctrl+C to stop.
-
-To answer whichever chat you open yourself, set `WATCH_MODE=open`.
+Leave the browser window on the chat list. The bot opens a chat only when it is in `ALLOWED_CHATS` and has a message waiting, answers, then returns to the list. Chats outside the list are never opened, read or answered. To answer whichever chat you open yourself, set `WATCH_MODE=open`.
 
 ```mermaid
 graph LR
@@ -159,6 +173,25 @@ graph LR
     E --> F[Type reply key by key, send]
     F --> Q
 ```
+
+## Where your data lives
+
+Everything the bot stores sits in one folder, `data/`, which git ignores.
+
+```
+data/
+├── wabot.db     chat history, contact profiles, AFK state
+├── profile/     saved WhatsApp login
+└── dom/         redacted page dumps from --selftest and --dump-dom
+```
+
+Change the locations with `DB_PATH` and `PROFILE_DIR`. To read the history:
+
+```bash
+sqlite3 data/wabot.db "select sender, text from messages order by id desc limit 10"
+```
+
+Upgrading from an older version? Move the old files in: `mkdir -p data && mv .wa-profile data/profile && mv wabot.db* data/`, and update `DB_PATH` and `PROFILE_DIR` in `.env.local`.
 
 ## Lower the ban risk
 
@@ -181,13 +214,12 @@ WhatsApp can ban accounts that automate messages, and no setting removes that ri
 - **Gemini error "fatal":** check `GEMINI_API_KEY` and `GEMINI_MODEL`.
 - **WhatsApp says the browser is unsupported:** set `BROWSER_CHANNEL=chrome`.
 - **The bot never opens a chat:** the title in the chat list must match an `ALLOWED_CHATS` entry, and the row must be unread or have a waiting message. A group stays unanswered unless `ALLOW_GROUPS=true`.
-- **Nothing is read from the chat:** WhatsApp changed its page. Update `src/wabot/whatsapp/selectors.py`.
-
-To read stored history: `sqlite3 wabot.db "select sender, text from messages order by id desc limit 10"`.
+- **The bot answers its own messages:** it cannot tell your messages from theirs. Run `--selftest --chat-index N` and check the "own messages recognised" line, then set `OWN_NAMES` to the name WhatsApp shows on your messages.
+- **Nothing is read from the chat:** WhatsApp changed its page. Run `python -m wabot --selftest --chat "Name"` to see which check fails, then update `src/wabot/whatsapp/selectors.py`.
 
 ## Keep private
 
-Never share `.env.local`, `.wa-profile/`, `wabot.db` or `persona.md`. They hold your key, your login, your chats and a profile of each contact. WhatsApp also logs out linked devices if your phone stays offline for about 14 days.
+Never share `.env.local`, `persona.md` or anything in `data/`. They hold your key, your login, your chats and a profile of each contact. WhatsApp also logs out linked devices if your phone stays offline for about 14 days.
 
 ## Develop
 
