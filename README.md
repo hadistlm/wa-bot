@@ -47,6 +47,11 @@ More options, all optional:
 | `QUIET_HOURS` | empty | Window with no replies, such as `23:00-07:00`. Messages that arrive meanwhile get answered once it ends. |
 | `TYPING_CHAR_DELAY_MS` | `70` | Pause per typed character. WhatsApp shows "typing..." while the bot types. `0` pastes instantly. |
 | `MAX_TYPING_SECONDS` | `20` | Upper limit for typing one reply. Long replies type faster to fit. |
+| `AFK_CHANCE` | `0.1` | Chance per incoming message that the bot goes AFK. `0` turns it off. |
+| `AFK_MIN_MINUTES` / `AFK_MAX_MINUTES` | `3` / `20` | How long an AFK spell lasts. |
+| `AFK_ACKNOWLEDGE` | `false` | After a long spell, Gemini may add a short "sori baru bales". |
+| `AFK_ACK_MIN_MINUTES` | `5` | Shortest spell that counts as long. |
+| `SKIP_BACKLOG` | `true` | Do not answer messages that were waiting before the bot started. |
 | `SKIP_TRIVIAL` | `true` | Ignore bare "ok", "makasih", "👍". |
 | `DEBOUNCE` | `true` | Wait one poll so a burst of messages gets one reply. |
 | `MAX_REPLIES_PER_HOUR` | `20` | Reply cap per chat. |
@@ -88,9 +93,20 @@ The bot stores messages in SQLite and builds a profile for every chat from them,
 
 - **Language, formality and message length** of the other person. Gemini receives a short note such as "work contact, mostly English, formal, they write about 12 words".
 - **Your own messages.** The bot tells your hand-typed messages from its own replies, then shows Gemini your last four so it copies your voice. Type a few replies yourself in a new chat to teach it.
+- **Goes AFK** now and then. On about 1 in 10 incoming messages the bot stays silent for 3 to 20 minutes, in every chat. The spell is saved in the database, so a restart does not end it early.
 - **Skips** bare acknowledgements, waits for a burst of messages to finish, and stops at the hourly cap.
 
 A new chat has no history, so the bot uses the plain persona until about 5 messages are stored. History only grows while the bot runs.
+
+### What happens after an AFK spell
+
+- **The bot answers on its next check.** There is no timer or special trigger. The first poll after the spell reads the chat and replies to whatever is waiting, using the last 5 messages. If the sender wrote several messages meanwhile, they get one reply.
+- **No back-to-back spells.** The first reply after a spell never rolls for another one.
+- **A late reply can mention the delay.** With `AFK_ACKNOWLEDGE=true` and a spell of at least `AFK_ACK_MIN_MINUTES`, Gemini may add a short phrase such as "sori baru bales" in the sender's language.
+- **If you answer by hand first,** the bot sees your message and stays quiet.
+- **If the sender never writes again,** the bot answers once after the spell, then sends nothing more. It never follows up or nudges.
+- **The chat must be open.** The bot only reads the chat shown in its browser window. A message waiting in another chat gets no reply until you open that chat.
+- **Restarts skip old messages.** With `SKIP_BACKLOG=true`, a message that was already waiting when the bot started gets no reply. The exception is a message that caused a spell still running at restart, which the bot answers after the spell.
 
 ## Log in once
 
@@ -136,6 +152,7 @@ WhatsApp can ban accounts that automate messages, and no setting removes that ri
 
 - Answer only people who wrote to you first, and keep `ALLOWED_CHATS` short.
 - Set `QUIET_HOURS` so the bot sleeps at night.
+- Keep `AFK_CHANCE` above 0 so the bot sometimes goes away for a few minutes, like a person would.
 - Keep the typing pause on (`TYPING_CHAR_DELAY_MS`) so replies look typed.
 - Lower `MAX_REPLIES_PER_HOUR` to 6 to 10 and raise `REPLY_DELAY_MAX` to about 40.
 - Use an established number, not a new SIM.
