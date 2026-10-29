@@ -35,3 +35,13 @@ def test_afk_defaults(tmp_path):
 def test_afk_ack_and_backlog_defaults(tmp_path):
     s = make(tmp_path)
     assert (s.afk_acknowledge, s.afk_ack_min_minutes, s.skip_backlog) == (False, 5.0, True)
+
+
+def test_list_mode_defaults(tmp_path):
+    s = make(tmp_path)
+    assert (s.watch_mode, s.headless, s.reply_gap_min, s.reply_gap_max) == (
+        "list",
+        False,
+        15.0,
+        45.0,
+    )

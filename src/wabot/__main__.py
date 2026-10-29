@@ -4,6 +4,8 @@ import argparse
 import logging
 import time
 
+from playwright.sync_api import Error as PlaywrightError
+
 from wabot.bot import Bot
 from wabot.config import Settings
 from wabot.llm import FatalReplyError, GeminiReplyGenerator
@@ -21,7 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     settings = Settings()  # type: ignore[call-arg]
-    with WhatsAppClient(settings.profile_dir, settings.browser_channel) as client:
+    headless = settings.headless and not args.login
+    with WhatsAppClient(settings.profile_dir, settings.browser_channel, headless) as client:
         if args.login:
             log.info("Scan the QR code: WhatsApp > Settings > Linked Devices")
             client.login()
@@ -57,6 +60,9 @@ def main(argv: list[str] | None = None) -> int:
                 afk_acknowledge=settings.afk_acknowledge,
                 afk_ack_min_minutes=settings.afk_ack_min_minutes,
                 skip_backlog=settings.skip_backlog,
+                watch_mode=settings.watch_mode,
+                open_delay=(settings.open_delay_min, settings.open_delay_max),
+                reply_gap=(settings.reply_gap_min, settings.reply_gap_max),
                 afk_chance=settings.afk_chance,
                 afk_minutes=(settings.afk_min_minutes, settings.afk_max_minutes),
                 char_delay_ms=settings.typing_char_delay_ms,
@@ -70,6 +76,9 @@ def main(argv: list[str] | None = None) -> int:
                         reply = bot.step()
                     except FatalReplyError as exc:
                         log.error("fatal: %s", exc)
+                        return 1
+                    except PlaywrightError as exc:
+                        log.error("browser problem (was the window closed?): %s", exc)
                         return 1
                     if reply and args.dry_run:
                         print(f"[dry-run] {reply}")

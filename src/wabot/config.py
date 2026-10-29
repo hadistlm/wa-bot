@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -47,6 +48,12 @@ class Settings(BaseSettings):
     afk_acknowledge: bool = False
     afk_ack_min_minutes: float = Field(5.0, ge=0)
     skip_backlog: bool = True
+    watch_mode: Literal["list", "open"] = "list"
+    open_delay_min: float = Field(1.0, ge=0)
+    open_delay_max: float = Field(4.0, ge=0)
+    reply_gap_min: float = Field(15.0, ge=0)
+    reply_gap_max: float = Field(45.0, ge=0)
+    headless: bool = False
     skip_trivial: bool = True
     debounce: bool = True
     max_replies_per_hour: int = Field(20, ge=1)

@@ -12,7 +12,7 @@ from typing import Protocol
 
 from wabot.llm import FatalReplyError, ReplyError, ReplyGenerator
 from wabot.matching import match_rule
-from wabot.models import Message
+from wabot.models import ChatRow, Message
 from wabot.profile import build_profile, is_trivial, prompt_block
 from wabot.quiet import QuietHours
 from wabot.store import Store
@@ -20,6 +20,7 @@ from wabot.store import Store
 log = logging.getLogger(__name__)
 FRIEND_DELAY_SCALE = 0.5
 AFK_UNTIL_KEY = "afk_until"
+RETRY_COOLDOWN_S = 60.0
 AFK_BACK_KEY = "afk_back"  # "<chat_id>:<minutes>" until the first reply after a spell
 
 
@@ -29,6 +30,12 @@ class ChatClient(Protocol):
         ...
 
     def read_messages(self) -> Sequence[Message]: ...
+
+    def chat_rows(self) -> Sequence[ChatRow]: ...
+
+    def open_chat(self, title: str) -> bool: ...
+
+    def close_chat(self) -> None: ...
 
     def send(self, text: str, char_delay_ms: float = 0.0) -> None: ...
 
@@ -56,6 +63,9 @@ class Bot:
         afk_acknowledge: bool = False,
         afk_ack_min_minutes: float = 5.0,
         skip_backlog: bool = False,
+        watch_mode: str = "open",
+        open_delay: tuple[float, float] = (0.0, 0.0),
+        reply_gap: tuple[float, float] = (0.0, 0.0),
         rng: random.Random | None = None,
         char_delay_ms: float = 0.0,
         max_typing_seconds: float = 20.0,
@@ -87,6 +97,17 @@ class Bot:
         self._afk_ack_min = afk_ack_min_minutes
         self._skip_backlog = skip_backlog
         self._seen_chats: set[int] = set()
+        self._watch_mode = watch_mode
+        self._open_delay = open_delay
+        self._reply_gap = reply_gap
+        self._gap_until = 0.0
+        self._last_reply_title = ""
+        self._unread_since: dict[str, float] = {}
+        self._baselined = False
+        self._baseline: dict[str, tuple[int, str]] = {}
+        self._sig_seen: dict[str, tuple[int, str]] = {}
+        self._cooldown_until: dict[str, float] = {}
+        self._warned_hidden: set[str] = set()
         self._rng = rng or random.Random()
         self._afk_until = float(store.get_state(AFK_UNTIL_KEY) or 0)
         self._sleep = sleep
@@ -148,8 +169,8 @@ class Bot:
             "(for example 'sori baru bales'). Skip it if the message does not call for it."
         )
 
-    def step(self) -> str | None:
-        """One poll. Returns the reply text if one was produced."""
+    def _gate_closed(self) -> bool:
+        """True when the bot must do nothing at all: quiet hours or an AFK spell."""
         if not self._allowlist and not self._warned_empty:
             log.warning("ALLOWED_CHATS is empty: the bot answers nobody")
             self._warned_empty = True
@@ -159,9 +180,92 @@ class Bot:
                 log.info("quiet hours %s", "started" if quiet_now else "ended")
                 self._was_quiet = quiet_now
             if quiet_now:
-                return None
-        if self._now().timestamp() < self._afk_until:
+                return True
+        return self._now().timestamp() < self._afk_until
+
+    def step(self) -> str | None:
+        """One poll. Returns the reply text if one was produced."""
+        if self._gate_closed():
             return None
+        if self._watch_mode == "list":
+            return self._step_list()
+        return self._handle_open_chat(debounce=self._debounce, backlog_check=self._skip_backlog)
+
+    def _allowed(self, title: str) -> bool:
+        return match_rule(title, self._allowlist, self._threshold) is not None
+
+    def _cooling(self, title: str) -> bool:
+        return self._clock() < self._cooldown_until.get(title, 0.0)
+
+    def _pick_from_list(self, rows: Sequence[ChatRow]) -> str | None:
+        """Choose the next allowed chat to open. Chats outside ALLOWED_CHATS are never chosen."""
+        if not self._baselined:
+            self._baselined = True
+            if self._skip_backlog:
+                self._baseline = {r.title: r.signature for r in rows if r.unread}
+        for row in rows:
+            if not row.unread:
+                self._sig_seen.pop(row.title, None)
+                self._unread_since.pop(row.title, None)
+                self._baseline.pop(row.title, None)
+        ready: list[tuple[float, int, str]] = []
+        for index, row in enumerate(rows):
+            if not row.unread or not self._allowed(row.title):
+                continue
+            if self._baseline.get(row.title) == row.signature:
+                continue  # was already waiting when the bot started
+            self._unread_since.setdefault(row.title, self._clock())
+            previous = self._sig_seen.get(row.title)
+            self._sig_seen[row.title] = row.signature
+            if self._debounce and previous != row.signature:
+                continue  # wait one poll so a burst of messages gets one reply
+            if not self._cooling(row.title):
+                ready.append((self._unread_since[row.title], index, row.title))
+        if ready:
+            return min(ready)[2]  # oldest waiting chat first, not the top of the list
+        visible = {r.title for r in rows}
+        for chat_id, title, wa_id in self._store.chats_with_pending():
+            if (chat_id, wa_id) in self._dry_seen or self._cooling(title):
+                continue
+            if not self._allowed(title):
+                continue
+            carried = self._afk_return(chat_id) is not None
+            if self._skip_backlog and chat_id not in self._seen_chats and not carried:
+                continue
+            if title not in visible:
+                if title not in self._warned_hidden:
+                    log.warning("chat=%r has a waiting message but is not in the chat list", title)
+                    self._warned_hidden.add(title)
+                continue
+            return title
+        return None
+
+    def _step_list(self) -> str | None:
+        title = self._pick_from_list(self._client.chat_rows())
+        if title is None:
+            return None
+        if title != self._last_reply_title and self._clock() < self._gap_until:
+            return None  # another chat was just answered: wait for the gap, one at a time
+        self._sleep(self._rng.uniform(*self._open_delay))
+        if not self._client.open_chat(title):
+            log.warning("chat=%r could not be opened", title)
+            self._cooldown_until[title] = self._clock() + RETRY_COOLDOWN_S
+            return None
+        try:
+            reply = self._handle_open_chat(debounce=False, backlog_check=False)
+        finally:
+            self._client.close_chat()
+        if reply is not None:
+            self._last_reply_title = title
+            self._gap_until = self._clock() + self._rng.uniform(*self._reply_gap)
+        if reply is None:
+            chat_id = self._store.find_chat_id(title)
+            if chat_id is not None and self._store.pending_incoming(chat_id) is not None:
+                self._cooldown_until[title] = self._clock() + RETRY_COOLDOWN_S
+        return reply
+
+    def _handle_open_chat(self, *, debounce: bool, backlog_check: bool) -> str | None:
+        """Answer the chat that is open right now, if it is allowed and has something waiting."""
         chat = self._client.active_chat()
         if chat is None:
             return None
@@ -183,14 +287,14 @@ class Bot:
             if self._afk_return(chat_id) is not None:
                 self._store.set_state(AFK_BACK_KEY, "")  # you answered by hand meanwhile
             return None
-        if first_seen and self._skip_backlog and self._afk_return(chat_id) is None:
+        if first_seen and backlog_check and self._afk_return(chat_id) is None:
             log.info("chat=%r skipped message that was waiting before start", title)
             self._store.mark_replied(chat_id, pending.wa_id)
             return None
         if (chat_id, pending.wa_id) in self._dry_seen:
             return None
 
-        if self._debounce and self._last_pending.get(chat_id) != pending.wa_id:
+        if debounce and self._last_pending.get(chat_id) != pending.wa_id:
             self._last_pending[chat_id] = pending.wa_id  # wait one poll for more messages
             return None
         if self._skip_trivial and is_trivial(pending.text):

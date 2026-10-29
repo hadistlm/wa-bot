@@ -315,3 +315,220 @@ def test_backlog_kept_when_spell_carried_over_restart(tmp_path):
 def test_backlog_skip_off_answers_waiting_message():
     c, g = FakeClient(msgs=[inc(1)]), FakeGen()
     assert make(c, g, skip_backlog=False).step() == "ok"
+
+
+# ---------------- chat list mode
+from wabot.models import ChatRow  # noqa: E402
+
+
+class ListClient:
+    """Chat list with several chats. Opening a chat clears its unread badge."""
+
+    def __init__(self, chats):
+        self.chats = chats  # title -> {"unread": int, "msgs": [Message], "group": bool}
+        self.open = None
+        self.opened, self.sent, self.closed = [], [], 0
+
+    def chat_rows(self):
+        return [ChatRow(t, c["unread"], c["msgs"][-1].text) for t, c in self.chats.items()]
+
+    def open_chat(self, title):
+        if title not in self.chats:
+            return False
+        self.open = title
+        self.opened.append(title)
+        self.chats[title]["unread"] = 0
+        return True
+
+    def close_chat(self):
+        self.open = None
+        self.closed += 1
+
+    def active_chat(self):
+        return None if self.open is None else (self.open, self.chats[self.open]["group"])
+
+    def read_messages(self):
+        return self.chats[self.open]["msgs"]
+
+    def send(self, text, char_delay_ms=0.0):
+        self.sent.append((self.open, text))
+
+
+def chat(unread, *msgs, group=False):
+    return {"unread": unread, "msgs": list(msgs), "group": group}
+
+
+def list_bot(client, gen=None, allow=("Budi",), **kw):
+    kw.setdefault("watch_mode", "list")
+    kw.setdefault("sleep", lambda _: None)
+    return make(client, gen or FakeGen(), allow=allow, **kw)
+
+
+def test_list_replies_to_allowed_unread_chat_and_closes_it():
+    c = ListClient({"Budi": chat(1, inc(1))})
+    assert list_bot(c).step() == "ok"
+    assert c.sent == [("Budi", "ok")] and c.closed == 1 and c.open is None
+
+
+def test_list_never_opens_or_answers_outside_allowlist():
+    c = ListClient({"Eve": chat(3, inc(1)), "Budi": chat(0, inc(2))})
+    g = FakeGen()
+    bot = list_bot(c, g)
+    for _ in range(3):
+        assert bot.step() is None
+    assert c.opened == [] and c.sent == [] and g.calls == []
+
+
+def test_list_empty_allowlist_opens_nothing():
+    c = ListClient({"Budi": chat(1, inc(1))})
+    assert list_bot(c, allow=()).step() is None
+    assert c.opened == []
+
+
+def test_list_header_mismatch_is_not_answered():
+    c = ListClient({"Budi": chat(1, inc(1))})
+    c.active_chat = lambda: ("Somebody Else", False)  # list row said Budi, header differs
+    g = FakeGen()
+    assert list_bot(c, g).step() is None
+    assert g.calls == [] and c.sent == [] and c.closed == 1
+
+
+def test_list_group_row_in_allowlist_still_skipped_without_allow_groups():
+    c = ListClient({"Budi": chat(1, inc(1), group=True)})
+    assert list_bot(c).step() is None
+    assert c.sent == []
+
+
+def test_list_debounce_waits_one_poll_on_sidebar_signature():
+    c = ListClient({"Budi": chat(1, inc(1))})
+    bot = list_bot(c, debounce=True)
+    assert bot.step() is None and c.opened == []  # first sight, wait
+    c.chats["Budi"] = chat(2, inc(1), inc(2))  # burst continues
+    assert bot.step() is None and c.opened == []
+    assert bot.step() == "ok" and c.opened == ["Budi"]  # stable for one poll
+
+
+def test_list_startup_baseline_leaves_waiting_chats_alone():
+    c = ListClient({"Budi": chat(2, inc(1))})
+    bot = list_bot(c, skip_backlog=True)
+    assert bot.step() is None and c.opened == []  # waiting before start: untouched
+    c.chats["Budi"] = chat(3, inc(1), inc(2))  # signature changed: new message
+    assert bot.step() == "ok" and c.opened == ["Budi"]
+
+
+def test_list_retries_pending_chat_after_failure_with_cooldown():
+    now = [0.0]
+    c = ListClient({"Budi": chat(1, inc(1))})
+    g = FakeGen(ReplyError("boom"))
+    bot = list_bot(c, g, clock=lambda: now[0])
+    assert bot.step() is None  # opened, Gemini failed, badge cleared
+    assert bot.step() is None and c.opened == ["Budi"]  # cooling down: not reopened
+    now[0] = 61
+    g.exc = None
+    assert bot.step() == "ok" and c.opened == ["Budi", "Budi"]  # retried through the database
+
+
+def test_list_does_not_reopen_in_dry_run():
+    c = ListClient({"Budi": chat(1, inc(1))})
+    bot = list_bot(c, dry_run=True)
+    assert bot.step() == "ok"
+    assert bot.step() is None and c.opened == ["Budi"] and c.sent == []
+
+
+def test_list_pending_not_visible_warns_and_waits(caplog):
+    now = [0.0]
+    c = ListClient({"Budi": chat(1, inc(1))})
+    bot = list_bot(c, FakeGen(ReplyError("boom")), clock=lambda: now[0])
+    bot.step()
+    del c.chats["Budi"]  # scrolled out of the rendered list
+    now[0] = 61
+    with caplog.at_level("WARNING"):
+        assert bot.step() is None
+    assert "not in the chat list" in caplog.text
+
+
+def test_list_open_failure_sets_cooldown():
+    c = ListClient({"Budi": chat(1, inc(1))})
+    c.open_chat = lambda title: False
+    bot = list_bot(c)
+    assert bot.step() is None
+    assert bot.step() is None  # cooling down
+
+
+def test_list_afk_pending_chat_answered_after_spell_without_being_open():
+    now = [0.0]
+    c = ListClient({"Budi": chat(1, inc(1))})
+    bot = list_bot(c, afk_chance=0.5, rng=FixedRng(0.1, 10), now=lambda: at(now[0]))
+    assert bot.step() is None  # opened, rolled AFK
+    assert c.open is None
+    now[0] = 700
+    bot._cooldown_until.clear()
+    assert bot.step() == "ok"  # reopened from the database even though no unread badge
+    assert c.opened == ["Budi", "Budi"]
+
+
+def test_list_quiet_hours_touch_nothing():
+    from wabot.quiet import parse_quiet_hours
+
+    c = ListClient({"Budi": chat(1, inc(1))})
+    bot = list_bot(c, quiet=parse_quiet_hours("00:00-23:59"), now=lambda: at(0))
+    assert bot.step() is None and c.opened == []
+
+
+def test_two_chats_at_once_are_answered_one_by_one_with_a_gap():
+    now = [0.0]
+    c = ListClient({"Budi": chat(1, inc(1)), "Ani": chat(1, inc(2))})
+    bot = list_bot(c, allow=("Budi", "Ani"), reply_gap=(30, 30), clock=lambda: now[0])
+    assert bot.step() == "ok"
+    assert c.sent == [("Budi", "ok")]
+    now[0] = 10
+    assert bot.step() is None and c.opened == ["Budi"]  # Ani waits, stays unread and unopened
+    assert c.chats["Ani"]["unread"] == 1
+    now[0] = 31
+    assert bot.step() == "ok"
+    assert [t for t, _ in c.sent] == ["Budi", "Ani"]
+
+
+def test_oldest_waiting_chat_is_answered_first_not_top_of_list():
+    now = [0.0]
+    c = ListClient({"Budi": chat(1, inc(1))})
+    bot = list_bot(c, allow=("Budi", "Ani"), clock=lambda: now[0], max_replies_per_hour=1000)
+    bot._afk_until = 10**12  # hold the bot while both messages arrive
+    bot._pick_from_list(c.chat_rows())  # Budi seen unread at t=0
+    now[0] = 5
+    c.chats = {"Ani": chat(1, inc(2)), "Budi": c.chats["Budi"]}  # Ani now tops the list
+    bot._pick_from_list(c.chat_rows())  # Ani seen unread at t=5
+    bot._afk_until = 0.0
+    assert bot.step() == "ok"
+    assert c.opened == ["Budi"]
+
+
+def test_same_chat_follow_up_is_not_held_by_the_gap():
+    now = [0.0]
+    c = ListClient({"Budi": chat(1, inc(1))})
+    bot = list_bot(c, reply_gap=(60, 60), clock=lambda: now[0])
+    assert bot.step() == "ok"
+    c.chats["Budi"] = chat(1, inc(1), Message("o", "Me", "ok", "ts", True), inc(3))
+    now[0] = 5
+    assert bot.step() == "ok"  # same chat: normal flow, no gap
+
+
+def test_queued_chat_rolls_afk_on_its_own_turn():
+    now = [0.0]
+    c = ListClient({"Budi": chat(1, inc(1)), "Ani": chat(1, inc(2))})
+    bot = list_bot(
+        c,
+        allow=("Budi", "Ani"),
+        reply_gap=(0, 0),
+        afk_chance=0.5,
+        rng=FixedRng(0.9, 0),
+        now=lambda: at(now[0]),
+        clock=lambda: now[0],
+    )
+    assert bot.step() == "ok"  # Budi: no AFK hit
+    bot._rng = FixedRng(0.1, 10)  # Ani's own roll hits
+    assert bot.step() is None
+    assert c.opened == ["Budi", "Ani"] and [t for t, _ in c.sent] == ["Budi"]
+    now[0] = 300
+    assert bot.step() is None  # still away: whole bot waits, nothing else opened
+    assert c.opened == ["Budi", "Ani"]
