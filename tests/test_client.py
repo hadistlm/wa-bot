@@ -97,7 +97,7 @@ REAL_LIST = """
   <div role="row" data-testid="list-item-0"><div role="gridcell"><div aria-selected="false">
     <div data-testid="cell-frame-container">
       <div data-testid="cell-frame-title"><span>1 unread message</span>
-        <span dir="auto" title="Vira">Vira</span></div>
+        <span dir="auto" title="Dewi">Dewi</span></div>
       <span data-testid="chat-list-timestamp">13:42</span>
       <div data-testid="cell-frame-secondary"><span data-testid="last-msg-status"
         title="let see ya">let see ya</span>
@@ -106,12 +106,12 @@ REAL_LIST = """
   <div role="row" data-testid="list-item-1"><div role="gridcell"><div aria-selected="true">
     <div data-testid="cell-frame-container">
       <div data-testid="cell-frame-title"><span>unread</span>
-        <span dir="auto" title="Masday">Masday</span></div>
+        <span dir="auto" title="Rudi">Rudi</span></div>
       <div data-testid="cell-frame-secondary"><span>uyy</span></div>
     </div></div></div></div>
   <div role="row" data-testid="list-item-2"><div role="gridcell"><div aria-selected="false">
     <div data-testid="cell-frame-container">
-      <div data-testid="cell-frame-title"><span dir="auto" title="Wa Eti">Wa Eti</span></div>
+      <div data-testid="cell-frame-title"><span dir="auto" title="Bu Tini">Bu Tini</span></div>
       <div data-testid="cell-frame-secondary"><span>ok</span></div>
     </div></div></div></div>
 </div></div>
@@ -130,7 +130,7 @@ def test_reads_the_real_chat_list_structure():
         client = WhatsAppClient.__new__(WhatsAppClient)
         client.page = page
         rows = client.chat_rows()
-        assert [(r.title, r.unread) for r in rows] == [("Vira", 1), ("Masday", 1), ("Wa Eti", 0)]
+        assert [(r.title, r.unread) for r in rows] == [("Dewi", 1), ("Rudi", 1), ("Bu Tini", 0)]
         assert "uyy" in rows[1].preview and "let see ya" in rows[0].preview
         browser.close()
 
@@ -146,7 +146,7 @@ def test_active_chat_falls_back_to_the_selected_row():
         page.set_content(REAL_LIST + '<div id="main"></div>')
         client = WhatsAppClient.__new__(WhatsAppClient)
         client.page = page
-        assert client.active_chat() == ("Masday", False)
+        assert client.active_chat() == ("Rudi", False)
         browser.close()
 
 

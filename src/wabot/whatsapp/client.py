@@ -9,7 +9,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
-from playwright.sync_api import BrowserContext, Locator, Page, Playwright, sync_playwright
+from playwright.sync_api import BrowserContext, Page, Playwright, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from wabot.human import TypingPlan
@@ -20,6 +20,21 @@ from wabot.whatsapp.parser import parse_message
 log = logging.getLogger(__name__)
 URL = "https://web.whatsapp.com"
 YOU_LABELS = frozenset({"you", "anda", "kamu"})
+_ROWS_JS = """
+(rows, s) => rows.map((row) => {
+  const t = row.querySelector(s.title);
+  if (!t) return null;
+  const badge = row.querySelector(s.unread);
+  const cell = row.querySelector(s.titleCell);
+  const prev = row.querySelector(s.preview);
+  return {
+    title: t.getAttribute('title') || t.innerText,
+    badge: badge ? (badge.getAttribute('aria-label') || '') : null,
+    cellText: cell ? cell.innerText : '',
+    preview: prev ? prev.innerText : '',
+  };
+})
+"""
 _READ_JS = """
 els => els.map(el => {
   const pre = el.querySelector('[data-pre-plain-text]');
@@ -50,10 +65,12 @@ class WhatsAppClient:
         channel: str = "",
         headless: bool = False,
         own_names: Iterable[str] = (),
+        sandbox: bool = True,
     ) -> None:
         self._profile_dir = profile_dir
         self._channel = channel or None
         self._headless = headless
+        self._sandbox = sandbox
         self._pw: Playwright | None = None
         self._ctx: BrowserContext | None = None
         self.page: Page | None = None
@@ -67,6 +84,7 @@ class WhatsAppClient:
             str(self._profile_dir),
             headless=self._headless,
             channel=self._channel,
+            chromium_sandbox=self._sandbox,
             viewport={"width": 1366, "height": 900},
         )
         self.page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
@@ -101,35 +119,29 @@ class WhatsAppClient:
         self._page().wait_for_selector(sel.PANE_SIDE, timeout=timeout_s * 1000)
 
     def chat_rows(self) -> list[ChatRow]:
-        """Rows currently rendered in the chat list. The list is virtualized."""
-        rows = self._page().locator(sel.ROW)
+        """Rows currently rendered in the chat list, read in one browser round trip."""
+        selectors = {
+            "title": sel.ROW_TITLE,
+            "unread": sel.ROW_UNREAD,
+            "titleCell": sel.ROW_TITLE_CELL,
+            "preview": sel.ROW_PREVIEW,
+        }
+        raw = self._page().locator(sel.ROW).evaluate_all(_ROWS_JS, selectors)
         out: list[ChatRow] = []
-        for i in range(rows.count()):
-            row = rows.nth(i)
-            title_loc = row.locator(sel.ROW_TITLE).first
-            if title_loc.count() == 0:
+        for item in raw:
+            if not item:
                 continue
-            title = (title_loc.get_attribute("title") or title_loc.inner_text()).strip()
-            if title:
-                out.append(ChatRow(title, self._unread(row), self._preview(row)))
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            badge = item.get("badge")
+            if badge is not None:
+                digits = "".join(c for c in str(badge) if c.isdigit())
+                unread = int(digits) if digits else 1
+            else:
+                unread = 1 if "unread" in str(item.get("cellText") or "").lower() else 0
+            out.append(ChatRow(title, unread, str(item.get("preview") or "").strip()))
         return out
-
-    @staticmethod
-    def _unread(row: Locator) -> int:
-        """Unread count from the badge, or 1 for a chat marked unread without a number."""
-        badge = row.locator(sel.ROW_UNREAD).first
-        if badge.count() > 0:
-            digits = "".join(c for c in (badge.get_attribute("aria-label") or "") if c.isdigit())
-            return int(digits) if digits else 1
-        cell = row.locator(sel.ROW_TITLE_CELL).first
-        if cell.count() > 0 and "unread" in cell.inner_text().lower():
-            return 1
-        return 0
-
-    @staticmethod
-    def _preview(row: Locator) -> str:
-        loc = row.locator(sel.ROW_PREVIEW).first
-        return loc.inner_text().strip() if loc.count() > 0 else ""
 
     def open_chat(self, title: str) -> bool:
         """Click the chat list row with this title. False if it is not rendered.
