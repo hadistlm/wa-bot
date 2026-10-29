@@ -59,6 +59,8 @@ More options, all optional:
 | `WATCH_MODE` | `list` | `list` stays on the chat list and opens allowed chats that need an answer. `open` answers the chat you opened. |
 | `OPEN_DELAY_MIN` / `OPEN_DELAY_MAX` | `1` / `4` | Random pause before opening a chat from the list. |
 | `REPLY_GAP_MIN` / `REPLY_GAP_MAX` | `15` / `45` | Pause between answers to different chats. |
+| `HEARTBEAT_MINUTES` | `5` | Minutes between "still watching" lines in the terminal. `0` turns them off. |
+| `CHROMIUM_SANDBOX` | `true` | Keep on. Off shows an "unsupported --no-sandbox" banner in the browser. |
 | `HEADLESS` | `false` | Hide the browser window. A minimized window is safer than headless. |
 | `SKIP_TRIVIAL` | `true` | Ignore bare "ok", "makasih", "👍". |
 | `DEBOUNCE` | `true` | Wait one poll so a burst of messages gets one reply. |
@@ -76,7 +78,7 @@ More options, all optional:
 - A phone number in any format: `+62 812-3456-7890`, `0812 3456 7890` and `6281234567890` all match the same contact.
 - A pattern: `*Santoso*` matches any name containing "Santoso".
 - A near miss: `Budy` still matches `Budi`.
-- A relationship tag after the entry: `Budi:work` or `Ani:friend`. Without a tag, the bot infers it from the chat.
+- A relationship tag after the entry: `work`, `friend`, `lover` or `family`, for example `Budi:work` or `Sari:lover`. Gemini gets it as context for the tone. Without a tag, the bot infers work or friend from the chat.
 
 An empty list means the bot answers nobody.
 
@@ -131,7 +133,7 @@ Run these from the project folder with the virtual environment active (`source .
 | Command | What it does | Gemini key |
 |---|---|---|
 | `python -m wabot --login` | Open WhatsApp Web and scan the QR code. Do this once. | no |
-| `python -m wabot --list-chats` | Print the chats in the list, numbered. | no |
+| `python -m wabot --list-chats` | Print the chats in the list, numbered, and say which ones `ALLOWED_CHATS` matches. | no |
 | `python -m wabot --selftest` | Read-only check of the chat list. | no |
 | `python -m wabot --selftest --chat "Name"` | Also open that chat and check messages, compose box and Esc. | no |
 | `python -m wabot --dump-dom` | Save a redacted copy of the page structure to `data/dom/`. | no |
@@ -146,6 +148,7 @@ Options:
 | `--chat "Name"` | `--selftest`, `--dump-dom` | Pick a chat by name. Case, accents and small typos are fine. |
 | `--chat-index N` | `--selftest`, `--dump-dom` | Pick the Nth chat in the list instead (1 is the top row). |
 | `--out DIR` | `--selftest`, `--dump-dom` | Folder for the page dumps. Default `data/dom`. |
+| `--verbose` | the bot | Log the decision for every poll, not just changes. |
 
 ### First run, step by step
 
@@ -212,8 +215,13 @@ WhatsApp can ban accounts that automate messages, and no setting removes that ri
 
 ## Troubleshooting
 
+- **The bot says "running" but ignores a chat that has unread messages.** Read the lines under "chats it will act on or is holding back" at startup, and the lines that follow. Each unread chat gets one line saying why. The usual reasons:
+  - `not in ALLOWED_CHATS`: add the chat, or check the spelling with `--list-chats`.
+  - `was waiting before start ... (SKIP_BACKLOG)`: the message came before the bot started. A new message wakes it, or set `SKIP_BACKLOG=false`.
+  - `waiting one poll`, `waiting for the reply gap`, `cooling down`, `paused until ... (AFK spell)`: temporary waits, no action needed.
+  Run with `--verbose` to see every poll.
+
 - **"session expired":** run `python -m wabot --login` again.
-- **The bot never replies:** the chat title probably does not match `ALLOWED_CHATS`. Run with `--dry-run` and read the log.
 - **Gemini error "fatal":** check `GEMINI_API_KEY` and `GEMINI_MODEL`.
 - **WhatsApp says the browser is unsupported:** set `BROWSER_CHANNEL=chrome`.
 - **The bot never opens a chat:** the title in the chat list must match an `ALLOWED_CHATS` entry, and the row must be unread or have a waiting message. A group stays unanswered unless `ALLOW_GROUPS=true`.
@@ -230,3 +238,5 @@ Never share `.env.local`, `persona.md` or anything in `data/`. They hold your ke
 pip install -e ".[dev]"
 pytest && ruff check . && mypy src
 ```
+
+The tests use made-up names. `tests/test_my_config.py` also checks your own `.env.local` (allowlist not empty, no mistyped tags such as `Sari:lovr`) and is skipped when that file is missing.
