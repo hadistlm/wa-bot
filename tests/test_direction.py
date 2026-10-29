@@ -57,7 +57,7 @@ def test_tail_icons_decide_direction_without_id_prefixes(make_client):
     c = make_client(
         page_html(
             bubble("AAA1", "Budi", "halo", tail="tail-in", label="Budi:"),
-            bubble("BBB2", "Hadist", "hai", tail="tail-out", label="You:"),
+            bubble("BBB2", "Andra", "hai", tail="tail-out", label="You:"),
         )
     )
     assert directions(c) == [("halo", False), ("hai", True)]
@@ -66,8 +66,8 @@ def test_tail_icons_decide_direction_without_id_prefixes(make_client):
 def test_untailed_run_follows_the_learned_own_name(make_client):
     c = make_client(
         page_html(
-            bubble("A1", "Hadist", "satu", tail="tail-out"),
-            bubble("A2", "Hadist", "dua"),  # same run, no tail
+            bubble("A1", "Andra", "satu", tail="tail-out"),
+            bubble("A2", "Andra", "dua"),  # same run, no tail
             bubble("A3", "Budi", "tiga", tail="tail-in"),
             bubble("A4", "Budi", "empat"),
         )
@@ -77,23 +77,23 @@ def test_untailed_run_follows_the_learned_own_name(make_client):
 
 def test_own_name_is_remembered_across_chats_and_reported(make_client):
     learned = []
-    c = make_client(page_html(bubble("A1", "Hadist", "satu", tail="tail-out")))
+    c = make_client(page_html(bubble("A1", "Andra", "satu", tail="tail-out")))
     c.on_own_name = learned.append
     c.read_messages()
-    assert learned == ["hadist"]
+    assert learned == ["andra"]
     c.read_messages()
-    assert learned == ["hadist"]  # reported once
-    c.page.set_content(page_html(bubble("B1", "Hadist", "tanpa tail")))  # another chat, no tail
+    assert learned == ["andra"]  # reported once
+    c.page.set_content(page_html(bubble("B1", "Andra", "tanpa tail")))  # another chat, no tail
     assert directions(c) == [("tanpa tail", True)]
 
 
 def test_you_label_marks_outgoing_when_no_tail_and_name_unknown(make_client):
-    c = make_client(page_html(bubble("A1", "Hadist", "sendiri", label="You:")))
+    c = make_client(page_html(bubble("A1", "Andra", "sendiri", label="You:")))
     assert directions(c) == [("sendiri", True)]
 
 
 def test_configured_own_name_works_from_the_first_read(make_client):
-    c = make_client(page_html(bubble("A1", "Hadist", "tanpa tail")), own_names={"hadist"})
+    c = make_client(page_html(bubble("A1", "Andra", "tanpa tail")), own_names={"andra"})
     assert directions(c) == [("tanpa tail", True)]
 
 
