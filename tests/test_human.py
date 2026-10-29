@@ -5,15 +5,19 @@ import pytest
 from wabot.human import (
     BEAT_MS,
     ENTER_PAUSE_MS,
+    READ_BASE_S,
+    READ_CAP_S,
+    STALL_MS,
     START_PAUSE_MS,
+    reading_seconds,
     typing_plan,
 )
 
 TEXT = "Siap, saya cek dulu ya. Nanti saya kabari!"
 
 
-def plan(text=TEXT, base=140, jitter=0.4, cap=20, seed=1):
-    return typing_plan(text, base, jitter, cap, random.Random(seed))
+def plan(text=TEXT, base=140, jitter=0.4, cap=20, seed=1, stalls=0.0):
+    return typing_plan(text, base, jitter, cap, random.Random(seed), stall_chance=stalls)
 
 
 def test_disabled_or_empty_means_paste_instantly():
@@ -66,3 +70,39 @@ def test_short_reply_is_not_stretched_to_the_cap():
 def test_realistic_speed_for_a_typical_reply():
     seconds = plan().typing_ms / 1000
     assert 3 < seconds < 12  # 41 characters, roughly 7 characters per second
+
+
+def test_stalls_add_a_long_pause_mid_sentence():
+    text = "abcdefghij" * 20
+    calm = plan(text=text, base=100, jitter=0.0, cap=1000, stalls=0.0)
+    stalled = plan(text=text, base=100, jitter=0.0, cap=1000, stalls=0.2, seed=5)
+    assert max(calm.char_delays_ms) == 100.0
+    assert max(stalled.char_delays_ms) >= 100 + STALL_MS[0]
+
+
+def test_no_stall_in_the_first_keys():
+    p = plan(text="abcdefgh" * 3, base=100, jitter=0.0, cap=1000, stalls=1.0)
+    assert set(p.char_delays_ms[:8]) == {100.0}
+    assert all(d >= 100 + STALL_MS[0] for d in p.char_delays_ms[8:])
+
+
+def test_default_stall_chance_is_rare():
+    text = "abcdefghij" * 10  # 100 keys
+    p = typing_plan(text, 100, 0.0, 1000, random.Random(3))
+    stalls = sum(1 for d in p.char_delays_ms if d > 500)
+    assert stalls <= 8
+
+
+def test_reading_time_grows_with_the_message_and_is_capped():
+    rng = random.Random(1)
+    short = reading_seconds(2, 0.25, rng)
+    long = reading_seconds(40, 0.25, random.Random(1))
+    huge = reading_seconds(10_000, 0.25, random.Random(1))
+    assert short < long
+    assert (READ_BASE_S + 0.5) * 0.8 <= short <= (READ_BASE_S + 0.5) * 1.3
+    assert huge <= READ_CAP_S * 1.3
+
+
+def test_reading_time_is_zero_when_off_or_nothing_to_read():
+    assert reading_seconds(20, 0.0) == 0.0
+    assert reading_seconds(0, 0.25) == 0.0
