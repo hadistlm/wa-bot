@@ -178,6 +178,16 @@ class Store:
             return None
         return Message(row["wa_id"], row["sender"], row["text"], row["sent_at"], False)
 
+    def unanswered_incoming(self, chat_id: int) -> list[Message]:
+        """Their messages since your last one, oldest first."""
+        rows = self._conn.execute(
+            "SELECT wa_id, sender, text, sent_at FROM messages WHERE chat_id=? AND outgoing=0 "
+            "AND id > COALESCE((SELECT MAX(id) FROM messages WHERE chat_id=? AND outgoing=1), 0) "
+            "ORDER BY id",
+            (chat_id, chat_id),
+        ).fetchall()
+        return [Message(r["wa_id"], r["sender"], r["text"], r["sent_at"], False) for r in rows]
+
     def mark_replied(self, chat_id: int, wa_id: str) -> None:
         self._conn.execute(
             "UPDATE messages SET replied=1, reply_error=NULL WHERE chat_id=? AND wa_id=?",

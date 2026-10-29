@@ -90,3 +90,13 @@ def test_creates_missing_parent_folders(tmp_path):
     with Store(path) as s:
         s.chat_id("X")
     assert path.exists()
+
+
+def test_unanswered_incoming_is_their_burst_since_your_last_message():
+    with Store(":memory:") as s:
+        c = s.chat_id("Budi")
+        s.upsert_messages(c, [msg(1), msg(2, out=True), msg(3), msg(4)])
+        assert [m.wa_id for m in s.unanswered_incoming(c)] == ["id3", "id4"]
+        s.upsert_messages(c, [msg(5, out=True)])
+        assert s.unanswered_incoming(c) == []
+        assert s.unanswered_incoming(s.chat_id("Nobody")) == []
