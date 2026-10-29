@@ -97,10 +97,18 @@ class WhatsAppClient:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        if self._ctx:
-            self._ctx.close()
-        if self._pw:
-            self._pw.stop()
+        # The browser or its helper may already be gone (Ctrl+C, closed window). Cleaning up
+        # must never raise, or it would hide the real reason the bot stopped.
+        if self._ctx is not None:
+            try:
+                self._ctx.close()
+            except Exception as exc:
+                log.debug("ignored error while closing the browser: %s", exc)
+        if self._pw is not None:
+            try:
+                self._pw.stop()
+            except Exception as exc:
+                log.debug("ignored error while stopping the driver: %s", exc)
 
     def _page(self) -> Page:
         if self.page is None:
