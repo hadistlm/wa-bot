@@ -20,3 +20,8 @@ def test_env_prompt_fallback(tmp_path):
 
 def test_allowlist_property(tmp_path):
     assert make(tmp_path, allowed_chats="a, b").allowlist == ("a", "b")
+
+
+def test_quiet_hours_setting(tmp_path):
+    assert make(tmp_path).quiet is None
+    assert make(tmp_path, quiet_hours="23:00-07:00").quiet is not None

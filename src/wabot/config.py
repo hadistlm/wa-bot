@@ -6,6 +6,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from wabot.matching import parse_allowlist
+from wabot.quiet import QuietHours, parse_quiet_hours
 
 DEFAULT_PERSONA = "You are {name}. Reply naturally and briefly."
 OUTPUT_RULES = "\n\nOutput only the next message text. Do not include timestamps or sender names."
@@ -37,9 +38,16 @@ class Settings(BaseSettings):
     profile_dir: Path = Path(".wa-profile")
     browser_channel: str = ""
 
+    quiet_hours: str = ""
+    typing_char_delay_ms: float = Field(70.0, ge=0)
+    max_typing_seconds: float = Field(20.0, gt=0)
     skip_trivial: bool = True
     debounce: bool = True
     max_replies_per_hour: int = Field(20, ge=1)
+
+    @property
+    def quiet(self) -> QuietHours | None:
+        return parse_quiet_hours(self.quiet_hours)
 
     @property
     def allowlist(self) -> tuple[str, ...]:
