@@ -12,6 +12,7 @@ from typing import Self
 from playwright.sync_api import BrowserContext, Locator, Page, Playwright, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from wabot.human import TypingPlan
 from wabot.models import ChatRow, Message
 from wabot.whatsapp import selectors as sel
 from wabot.whatsapp.parser import parse_message
@@ -207,18 +208,31 @@ class WhatsAppClient:
         label = str(item.get("label") or "").rstrip(":").strip().casefold()
         return label in YOU_LABELS or msg.sender.casefold() in self.own_names
 
-    def send(self, text: str, char_delay_ms: float = 0.0) -> None:
-        """Type the reply key by key so WhatsApp shows "typing...", then press Enter."""
+    def send(self, text: str, plan: TypingPlan | None = None) -> None:
+        """Send `text`. With a plan, type it key by key like a person, then press Enter.
+
+        Typing key events make WhatsApp show "typing..." to the other person. Without a plan
+        the text is pasted at once.
+        """
         page = self._page()
         box = page.locator(sel.COMPOSE_BOX).last
         box.click()
-        for i, line in enumerate(text.split("\n")):
-            if i:
+        if plan is None:
+            for i, line in enumerate(text.split("\n")):
+                if i:
+                    page.keyboard.press("Shift+Enter")
+                if i == 0:
+                    box.fill(line)
+                else:
+                    page.keyboard.insert_text(line)
+            page.keyboard.press("Enter")
+            return
+        page.wait_for_timeout(plan.start_pause_ms)
+        for char, delay in zip(text, plan.char_delays_ms, strict=True):
+            if char == "\n":
                 page.keyboard.press("Shift+Enter")
-            if char_delay_ms > 0:
-                box.press_sequentially(line, delay=char_delay_ms)
-            elif i == 0:
-                box.fill(line)
             else:
-                page.keyboard.insert_text(line)
+                page.keyboard.type(char)
+            page.wait_for_timeout(delay)
+        page.wait_for_timeout(plan.enter_pause_ms)
         page.keyboard.press("Enter")

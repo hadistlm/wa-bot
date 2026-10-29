@@ -1,5 +1,6 @@
 import pytest
 
+from wabot.human import TypingPlan
 from wabot.whatsapp.client import WhatsAppClient
 
 pytestmark = pytest.mark.browser
@@ -46,7 +47,7 @@ def test_send_types_into_compose_box():
         page.set_content(HTML)
         client = WhatsAppClient.__new__(WhatsAppClient)
         client.page = page
-        client.send("halo bro", char_delay_ms=1)
+        client.send("halo bro", TypingPlan(1.0, (1.0,) * 8, 1.0))
         assert page.locator("footer div[contenteditable]").inner_text().startswith("halo bro")
         browser.close()
 
@@ -146,4 +147,39 @@ def test_active_chat_falls_back_to_the_selected_row():
         client = WhatsAppClient.__new__(WhatsAppClient)
         client.page = page
         assert client.active_chat() == ("Masday", False)
+        browser.close()
+
+
+def test_send_pastes_instantly_without_a_plan_and_keeps_newlines():
+    sync = pytest.importorskip("playwright.sync_api")
+    with sync.sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Exception:
+            pytest.skip("no chromium")
+        page = browser.new_page()
+        page.set_content('<footer><div contenteditable="true"></div></footer>')
+        client = WhatsAppClient.__new__(WhatsAppClient)
+        client.page = page
+        text = "a" * 0 + "satu"
+        client.send(text)
+        assert page.locator("footer div[contenteditable]").inner_text().startswith("satu")
+        browser.close()
+
+
+def test_typed_send_handles_newlines_and_emoji():
+    sync = pytest.importorskip("playwright.sync_api")
+    with sync.sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Exception:
+            pytest.skip("no chromium")
+        page = browser.new_page()
+        page.set_content('<footer><div contenteditable="true"></div></footer>')
+        client = WhatsAppClient.__new__(WhatsAppClient)
+        client.page = page
+        text = "hi\nok \U0001f44d"
+        client.send(text, TypingPlan(1.0, (1.0,) * len(text), 1.0))
+        typed = page.locator("footer div[contenteditable]").inner_text()
+        assert "hi" in typed and "ok" in typed and "\U0001f44d" in typed
         browser.close()
