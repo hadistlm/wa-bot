@@ -11,6 +11,7 @@ from google import genai
 from google.genai import errors, types
 
 from wabot.models import Message
+from wabot.tone import Tone
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +25,9 @@ class FatalReplyError(Exception):
 
 
 class ReplyGenerator(Protocol):
-    def generate(self, context: Sequence[Message], extra: str = "") -> str: ...
+    def generate(
+        self, context: Sequence[Message], extra: str = "", tone: Tone | None = None
+    ) -> str: ...
 
 
 def format_context(context: Sequence[Message]) -> str:
@@ -50,11 +53,31 @@ class GeminiReplyGenerator:
         self._temperature = temperature
         self._max_output_tokens = max_output_tokens
 
-    def generate(self, context: Sequence[Message], extra: str = "") -> str:
+    def system_instruction(self, extra: str = "", tone: Tone | None = None) -> str:
+        """The prompt for one call.
+
+        With a tone the order is: priority rules, persona, chat notes, reminder. The rules sit
+        above the persona and say they win, so nothing in the persona can shorten the reply.
+        """
+        if tone is None:
+            return f"{self._system_instruction}\n\n{extra}".strip()
+        sections = [
+            tone.rules,
+            f"PERSONA\n{self._system_instruction}",
+            f"CHAT NOTES\n{extra}" if extra else "",
+            tone.reminder,
+        ]
+        return "\n\n".join(s for s in sections if s)
+
+    def generate(
+        self, context: Sequence[Message], extra: str = "", tone: Tone | None = None
+    ) -> str:
         config = types.GenerateContentConfig(
-            system_instruction=f"{self._system_instruction}\n\n{extra}".strip(),
+            system_instruction=self.system_instruction(extra, tone),
             temperature=self._temperature,
-            max_output_tokens=self._max_output_tokens,
+            max_output_tokens=max(self._max_output_tokens, tone.max_output_tokens)
+            if tone
+            else self._max_output_tokens,
         )
         last: Exception | None = None
         for attempt in range(self._retries):
