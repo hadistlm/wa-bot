@@ -141,6 +141,19 @@ class Store:
         ).fetchall()
         return [r["text"] for r in reversed(rows)]
 
+    def find_chat_id(self, title: str) -> int | None:
+        row = self._conn.execute("SELECT id FROM chats WHERE title=?", (title,)).fetchone()
+        return None if row is None else int(row["id"])
+
+    def chats_with_pending(self) -> list[tuple[int, str, str]]:
+        """(chat_id, title, wa_id) for chats whose newest message is incoming and unanswered."""
+        rows = self._conn.execute(
+            "SELECT c.id, c.title, m.wa_id FROM chats c JOIN messages m "
+            "ON m.id = (SELECT MAX(id) FROM messages WHERE chat_id = c.id) "
+            "WHERE m.outgoing = 0 AND m.replied = 0 ORDER BY m.id"
+        ).fetchall()
+        return [(int(r["id"]), r["title"], r["wa_id"]) for r in rows]
+
     def recent(self, chat_id: int, limit: int) -> list[Message]:
         rows = self._conn.execute(
             "SELECT wa_id, sender, text, sent_at, outgoing FROM messages "

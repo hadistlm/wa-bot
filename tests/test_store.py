@@ -72,3 +72,14 @@ def test_state_roundtrip():
         s.set_state("k", "1")
         s.set_state("k", "2")
         assert s.get_state("k") == "2"
+
+
+def test_chats_with_pending_and_find_chat_id():
+    with Store(":memory:") as s:
+        a, b = s.chat_id("Budi"), s.chat_id("Ani")
+        s.upsert_messages(a, [msg(1)])
+        s.upsert_messages(b, [msg(2), msg(3, out=True)])
+        assert s.chats_with_pending() == [(a, "Budi", "id1")]
+        s.mark_replied(a, "id1")
+        assert s.chats_with_pending() == []
+        assert s.find_chat_id("Ani") == b and s.find_chat_id("Nobody") is None
