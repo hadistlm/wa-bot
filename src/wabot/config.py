@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     reply_gap_min: float = Field(15.0, ge=0)
     reply_gap_max: float = Field(45.0, ge=0)
     headless: bool = False
+    chromium_sandbox: bool = True
+    heartbeat_minutes: float = Field(5.0, ge=0)
     skip_trivial: bool = True
     debounce: bool = True
     max_replies_per_hour: int = Field(20, ge=1)

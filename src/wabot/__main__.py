@@ -11,6 +11,7 @@ from playwright.sync_api import Error as PlaywrightError
 from wabot.bot import Bot
 from wabot.config import Settings
 from wabot.llm import FatalReplyError, GeminiReplyGenerator
+from wabot.matching import allow_label
 from wabot.store import Store
 from wabot.whatsapp.client import SessionExpiredError, WhatsAppClient
 from wabot.whatsapp.dump import dump_dom
@@ -51,6 +52,7 @@ def _parser() -> argparse.ArgumentParser:
         help="open the Nth chat in the list instead (1 = top)",
     )
     parser.add_argument("--out", default="data/dom", help="folder for dumps (default data/dom)")
+    parser.add_argument("--verbose", action="store_true", help="log the decision for every poll")
     parser.add_argument("--dry-run", action="store_true", help="print replies, send nothing")
     return parser
 
@@ -59,7 +61,11 @@ def _diagnose(client: WhatsAppClient, args: argparse.Namespace, settings: Settin
     out = Path(args.out)
     if args.list_chats:
         for number, row in enumerate(client.chat_rows(), start=1):
-            print(f"{number:>3}. {row.title}" + (f"  [unread {row.unread}]" if row.unread else ""))
+            label = allow_label(
+                row.title, settings.allowlist, settings.chat_tags, settings.match_threshold
+            )
+            unread = f"  [unread {row.unread}]" if row.unread else ""
+            print(f"{number:>3}. {row.title}{unread}  -> {label}")
         return 0
     if args.dump_dom:
         wanted = bool(args.chat or args.chat_index)
@@ -104,6 +110,25 @@ def _remember_own_names(client: WhatsAppClient, store: Store) -> None:
     client.on_own_name = save
 
 
+def _startup_report(bot: Bot, client: WhatsAppClient, settings: Settings) -> None:
+    """Say what the bot will do, so a quiet terminal is not a mystery."""
+    quiet = settings.quiet_hours or "off"
+    log.info(
+        "mode=%s, %d allowed entries, groups %s, skip backlog %s, quiet %s, AFK %.0f%%",
+        settings.watch_mode,
+        len(settings.allowlist),
+        "on" if settings.allow_groups else "off",
+        "on" if settings.skip_backlog else "off",
+        quiet,
+        settings.afk_chance * 100,
+    )
+    if settings.watch_mode == "list":
+        lines = bot.describe_chats(client.chat_rows())
+        log.info("chats it will act on or is holding back (%d):", len(lines))
+        for line in lines:
+            log.info("  %s", line)
+
+
 def _run_bot(client: WhatsAppClient, settings: Settings, args: argparse.Namespace) -> int:
     api_key = settings.gemini_api_key.get_secret_value()
     if not api_key:
@@ -137,6 +162,7 @@ def _run_bot(client: WhatsAppClient, settings: Settings, args: argparse.Namespac
             skip_backlog=settings.skip_backlog,
             watch_mode=settings.watch_mode,
             open_delay=(settings.open_delay_min, settings.open_delay_max),
+            heartbeat_minutes=settings.heartbeat_minutes,
             reply_gap=(settings.reply_gap_min, settings.reply_gap_max),
             afk_chance=settings.afk_chance,
             afk_minutes=(settings.afk_min_minutes, settings.afk_max_minutes),
@@ -146,6 +172,7 @@ def _run_bot(client: WhatsAppClient, settings: Settings, args: argparse.Namespac
             max_typing_seconds=settings.max_typing_seconds,
         )
         log.info("running%s. Ctrl+C to stop", " (dry run)" if args.dry_run else "")
+        _startup_report(bot, client, settings)
         try:
             while True:
                 try:
@@ -166,7 +193,10 @@ def _run_bot(client: WhatsAppClient, settings: Settings, args: argparse.Namespac
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
 
     settings = Settings()  # type: ignore[call-arg]
     diagnostic = args.selftest or args.dump_dom or args.list_chats or bool(args.send_test)
@@ -174,7 +204,11 @@ def main(argv: list[str] | None = None) -> int:
     settings.profile_dir.mkdir(parents=True, exist_ok=True)
     own_names = [n.strip() for n in settings.own_names.split(",") if n.strip()]
     with WhatsAppClient(
-        settings.profile_dir, settings.browser_channel, headless, own_names
+        settings.profile_dir,
+        settings.browser_channel,
+        headless,
+        own_names,
+        settings.chromium_sandbox,
     ) as client:
         if args.login:
             log.info("Scan the QR code: WhatsApp > Settings > Linked Devices")

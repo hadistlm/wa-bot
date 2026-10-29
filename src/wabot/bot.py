@@ -12,7 +12,7 @@ from typing import Protocol
 
 from wabot.human import TypingPlan, typing_plan
 from wabot.llm import FatalReplyError, ReplyError, ReplyGenerator
-from wabot.matching import match_rule
+from wabot.matching import allow_label, match_rule
 from wabot.models import ChatRow, Message
 from wabot.profile import build_profile, is_trivial, prompt_block
 from wabot.quiet import QuietHours
@@ -66,6 +66,7 @@ class Bot:
         skip_backlog: bool = False,
         watch_mode: str = "open",
         open_delay: tuple[float, float] = (0.0, 0.0),
+        heartbeat_minutes: float = 0.0,
         reply_gap: tuple[float, float] = (0.0, 0.0),
         rng: random.Random | None = None,
         char_delay_ms: float = 0.0,
@@ -115,6 +116,10 @@ class Bot:
         self._afk_until = float(store.get_state(AFK_UNTIL_KEY) or 0)
         self._sleep = sleep
         self._clock = clock
+        self._heartbeat_s = heartbeat_minutes * 60
+        self._last_beat = clock()
+        self._reasons: dict[str, str] = {}
+        self._was_afk = False
         self._warned_empty = False
         self._dry_seen: set[tuple[int, str]] = set()
         self._last_pending: dict[int, str] = {}
@@ -171,6 +176,33 @@ class Bot:
             "(for example 'sori baru bales'). Skip it if the message does not call for it."
         )
 
+    def _note(self, key: str, reason: str) -> None:
+        """Log why a chat is being held back, once per change. Every poll in DEBUG."""
+        if self._reasons.get(key) != reason:
+            self._reasons[key] = reason
+            log.info("%s: %s", key, reason)
+        else:
+            log.debug("%s: %s", key, reason)
+
+    def _beat(self, text: str) -> None:
+        """Heartbeat so a quiet terminal still shows the watcher is alive."""
+        if self._heartbeat_s <= 0:
+            return
+        now = self._clock()
+        if now - self._last_beat >= self._heartbeat_s:
+            self._last_beat = now
+            log.info("still watching: %s", text)
+
+    def describe_chats(self, rows: Sequence[ChatRow]) -> list[str]:
+        """One line per unread or allowed chat: what the bot will do with it."""
+        lines = []
+        for row in rows:
+            label = allow_label(row.title, self._allowlist, self._tags, self._threshold)
+            if row.unread or label != "not allowed":
+                unread = f"unread {row.unread}" if row.unread else "read"
+                lines.append(f"{row.title}  [{unread}]  {label}")
+        return lines
+
     def _gate_closed(self) -> bool:
         """True when the bot must do nothing at all: quiet hours or an AFK spell."""
         if not self._allowlist and not self._warned_empty:
@@ -183,14 +215,24 @@ class Bot:
                 self._was_quiet = quiet_now
             if quiet_now:
                 return True
-        return self._now().timestamp() < self._afk_until
+        afk_now = self._now().timestamp() < self._afk_until
+        if afk_now != self._was_afk:
+            self._was_afk = afk_now
+            if afk_now:
+                until = datetime.fromtimestamp(self._afk_until).strftime("%H:%M")
+                log.info("paused until %s (AFK spell)", until)
+            else:
+                log.info("AFK spell ended, watching again")
+        return afk_now
 
     def step(self) -> str | None:
         """One poll. Returns the reply text if one was produced."""
         if self._gate_closed():
+            self._beat("paused (quiet hours or an AFK spell)")
             return None
         if self._watch_mode == "list":
             return self._step_list()
+        self._beat("open chat mode")
         return self._handle_open_chat(debounce=self._debounce, backlog_check=self._skip_backlog)
 
     def _allowed(self, title: str) -> bool:
@@ -199,8 +241,8 @@ class Bot:
     def _cooling(self, title: str) -> bool:
         return self._clock() < self._cooldown_until.get(title, 0.0)
 
-    def _pick_from_list(self, rows: Sequence[ChatRow]) -> str | None:
-        """Choose the next allowed chat to open. Chats outside ALLOWED_CHATS are never chosen."""
+    def _pick_from_list(self, rows: Sequence[ChatRow]) -> tuple[str, str] | None:
+        """Choose the next allowed chat to open as (title, why). Others are never chosen."""
         if not self._baselined:
             self._baselined = True
             if self._skip_backlog:
@@ -210,21 +252,33 @@ class Bot:
                 self._sig_seen.pop(row.title, None)
                 self._unread_since.pop(row.title, None)
                 self._baseline.pop(row.title, None)
-        ready: list[tuple[float, int, str]] = []
+                self._reasons.pop(row.title, None)
+        ready: list[tuple[float, int, str, str]] = []
         for index, row in enumerate(rows):
-            if not row.unread or not self._allowed(row.title):
+            if not row.unread:
+                continue
+            if not self._allowed(row.title):
+                self._note(row.title, "unread, not in ALLOWED_CHATS, ignoring")
                 continue
             if self._baseline.get(row.title) == row.signature:
-                continue  # was already waiting when the bot started
+                self._note(
+                    row.title,
+                    "was waiting before start, ignoring until a new message (SKIP_BACKLOG)",
+                )
+                continue
             self._unread_since.setdefault(row.title, self._clock())
             previous = self._sig_seen.get(row.title)
             self._sig_seen[row.title] = row.signature
             if self._debounce and previous != row.signature:
-                continue  # wait one poll so a burst of messages gets one reply
-            if not self._cooling(row.title):
-                ready.append((self._unread_since[row.title], index, row.title))
+                self._note(row.title, "new messages, waiting one poll to see if more arrive")
+                continue
+            if self._cooling(row.title):
+                self._note(row.title, "cooling down after a failed attempt")
+                continue
+            ready.append((self._unread_since[row.title], index, row.title, f"{row.unread} unread"))
         if ready:
-            return min(ready)[2]  # oldest waiting chat first, not the top of the list
+            _, _, title, why = min(ready)  # oldest waiting chat first, not the top of the list
+            return title, why
         visible = {r.title for r in rows}
         for chat_id, title, wa_id in self._store.chats_with_pending():
             if (chat_id, wa_id) in self._dry_seen or self._cooling(title):
@@ -233,21 +287,31 @@ class Bot:
                 continue
             carried = self._afk_return(chat_id) is not None
             if self._skip_backlog and chat_id not in self._seen_chats and not carried:
+                self._note(title, "message from before start, ignoring (SKIP_BACKLOG)")
                 continue
             if title not in visible:
                 if title not in self._warned_hidden:
                     log.warning("chat=%r has a waiting message but is not in the chat list", title)
                     self._warned_hidden.add(title)
                 continue
-            return title
+            return title, "waiting message, retrying"
         return None
 
     def _step_list(self) -> str | None:
-        title = self._pick_from_list(self._client.chat_rows())
-        if title is None:
+        rows = self._client.chat_rows()
+        unread = sum(1 for r in rows if r.unread)
+        allowed = sum(1 for r in rows if self._allowed(r.title))
+        self._beat(f"{len(rows)} chats visible, {unread} unread, {allowed} allowed")
+        log.debug("poll: %d chats, %d unread, %d allowed", len(rows), unread, allowed)
+        picked = self._pick_from_list(rows)
+        if picked is None:
             return None
+        title, why = picked
         if title != self._last_reply_title and self._clock() < self._gap_until:
+            self._note(title, "waiting for the reply gap so two chats are not answered together")
             return None  # another chat was just answered: wait for the gap, one at a time
+        self._reasons.pop(title, None)
+        log.info("%s: opening (%s)", title, why)
         self._sleep(self._rng.uniform(*self._open_delay))
         if not self._client.open_chat(title):
             log.warning("chat=%r could not be opened", title)
