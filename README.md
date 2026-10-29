@@ -46,11 +46,13 @@ More options, all optional:
 | `ALLOW_GROUPS` | `false` | Answer group chats too. |
 | `MATCH_THRESHOLD` | `0.85` | How close a typo may be to match a name. |
 | `POLL_INTERVAL` | `4` | Seconds between checks. |
-| `REPLY_DELAY_MIN` / `REPLY_DELAY_MAX` | `2` / `6` | Random pause before sending. Halved for friend chats. |
+| `REPLY_DELAY_MIN` / `REPLY_DELAY_MAX` | `4` / `12` | Thinking pause after Gemini answers, before the first key. Same for every chat. |
+| `READ_SECONDS_PER_WORD` | `0.25` | Reading time added for the sender's message. `0` turns it off. |
+| `LOG_MESSAGES` | `true` | Show what the sender wrote in the terminal. `false` logs only counts. |
 | `QUIET_HOURS` | empty | Window with no replies, such as `23:00-07:00`. Messages that arrive meanwhile get answered once it ends. |
-| `TYPING_CHAR_DELAY_MS` | `140` | Average pause per typed key, about 7 characters a second. WhatsApp shows "typing..." while the bot types. `0` pastes instantly. |
+| `TYPING_CHAR_DELAY_MS` | `200` | Average pause per typed key, about 5 characters a second. WhatsApp shows "typing..." while the bot types. `0` pastes instantly. |
 | `TYPING_JITTER` | `0.4` | How uneven the keys are. `0` is a fixed rhythm, `1` is very uneven. |
-| `MAX_TYPING_SECONDS` | `20` | Upper limit for the keys of one reply. Long replies type faster to fit. |
+| `MAX_TYPING_SECONDS` | `30` | Upper limit for the keys of one reply. Long replies type faster to fit. |
 | `AFK_CHANCE` | `0.1` | Chance per incoming message that the bot goes AFK. `0` turns it off. |
 | `AFK_MIN_MINUTES` / `AFK_MAX_MINUTES` | `3` / `20` | How long an AFK spell lasts. |
 | `AFK_ACKNOWLEDGE` | `false` | After a long spell, Gemini may add a short "sori baru bales". |
@@ -179,6 +181,34 @@ graph LR
     E --> F[Type reply key by key, send]
     F --> Q
 ```
+
+## Timing of a reply
+
+From the moment Gemini answers, the bot waits and types like this:
+
+| Stage | Setting | Default | What the other person sees |
+|---|---|---|---|
+| Reading | `READ_SECONDS_PER_WORD` | 1 s plus 0.25 s per word, up to 12 s | nothing |
+| Thinking | `REPLY_DELAY_MIN` / `REPLY_DELAY_MAX` | 4 to 12 s | nothing |
+| Start pause | fixed | 0.4 to 1.5 s | nothing |
+| Typing | `TYPING_CHAR_DELAY_MS`, `TYPING_JITTER`, `MAX_TYPING_SECONDS` | about 5 keys a second, uneven, with pauses and the odd stall | "typing..." |
+| Before Enter | fixed | 0.3 to 1.2 s | "typing..." stops |
+
+Example: an 8-word message answered with a 40-character reply takes about 17 to 27 s after Gemini answers. Polling, the one-poll debounce and the pause before opening the chat add a few seconds before that. Every stage has a setting, so lower the numbers if replies feel too slow.
+
+## What the terminal shows
+
+```
+Dewi: opening chat (3 unread)
+Dewi: chat opened
+Dewi: 2 new message(s) from them:
+  [14:05, 29/10/2026] Dewi: kamu udah makan belum?
+  [14:05, 29/10/2026] Dewi: jangan lupa yaa
+Dewi: reading 3.1 s, thinking 6.4 s, then typing 38 characters (about 9.0 s)
+Dewi: sent
+```
+
+Message text appears in your terminal only, never in a file. Set `LOG_MESSAGES=false` to see just counts.
 
 ## Where your data lives
 
